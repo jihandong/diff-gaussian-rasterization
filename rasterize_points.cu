@@ -20,6 +20,7 @@
 #include <memory>
 #include "cuda_rasterizer/config.h"
 #include "cuda_rasterizer/rasterizer.h"
+#include "cuda_rasterizer/rasterizer_impl.h"
 #include <fstream>
 #include <string>
 #include <functional>
@@ -32,7 +33,7 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -53,7 +54,8 @@ RasterizeGaussiansCUDA(
 	const torch::Tensor& campos,
 	const bool prefiltered,
 	const bool antialiasing,
-	const bool debug)
+	const bool debug,
+	const int profile_mask)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
@@ -118,9 +120,31 @@ RasterizeGaussiansCUDA(
 		out_invdepthptr,
 		antialiasing,
 		radii.contiguous().data<int>(),
-		debug);
+		debug,
+		profile_mask);
   }
-  return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth);
+	// Parse imgBuffer to extract profiling arrays (if present) and copy
+	// them into separate tensors to return to Python. ImageState::fromChunk
+	// knows how to obtain pointers into the imgBuffer chunk.
+	torch::Tensor tests_tensor = torch::empty({0}, int_opts);
+	torch::Tensor contribs_tensor = torch::empty({0}, int_opts);
+	if (imgBuffer.numel() > 0)
+	{
+		char* chunk = reinterpret_cast<char*>(imgBuffer.contiguous().data_ptr());
+		CudaRasterizer::ImageState imgState = CudaRasterizer::ImageState::fromChunk(chunk, W * H);
+		if (imgState.gaussians_tested != nullptr)
+		{
+			// Create device tensor and copy device->device
+			tests_tensor = torch::empty({H, W}, int_opts).contiguous();
+			contribs_tensor = torch::empty({H, W}, int_opts).contiguous();
+			size_t bytes = sizeof(uint32_t) * (size_t)W * (size_t)H;
+			// device to device copy
+			cudaMemcpy(tests_tensor.data_ptr(), imgState.gaussians_tested, bytes, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(contribs_tensor.data_ptr(), imgState.gaussians_contribs, bytes, cudaMemcpyDeviceToDevice);
+		}
+	}
+
+	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, tests_tensor, contribs_tensor);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

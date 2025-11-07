@@ -172,9 +172,15 @@ CudaRasterizer::GeometryState CudaRasterizer::GeometryState::fromChunk(char*& ch
 CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, size_t N)
 {
 	ImageState img;
+	// Order here must match the order used elsewhere when packing the
+	// image chunk. We keep accum_alpha first for historical reasons.
 	obtain(chunk, img.accum_alpha, N, 128);
 	obtain(chunk, img.n_contrib, N, 128);
 	obtain(chunk, img.ranges, N, 128);
+	// Profiling buffers (new). Allocate/obtain space for them in the
+	// image chunk after the existing buffers.
+	obtain(chunk, img.gaussians_tested, N, 128);
+	obtain(chunk, img.gaussians_contribs, N, 128);
 	return img;
 }
 
@@ -219,7 +225,8 @@ int CudaRasterizer::Rasterizer::forward(
 	float* depth,
 	bool antialiasing,
 	int* radii,
-	bool debug)
+	bool debug,
+	int profile_mask)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -322,6 +329,9 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+    // Determine whether profiling of per-pixel statistics is enabled
+    bool enable_profiling = (profile_mask & 1) != 0;
+
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
 		imgState.ranges,
@@ -332,6 +342,9 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.conic_opacity,
 		imgState.accum_alpha,
 		imgState.n_contrib,
+		imgState.gaussians_tested,
+		imgState.gaussians_contribs,
+		enable_profiling,
 		background,
 		out_color,
 		geomState.depths,

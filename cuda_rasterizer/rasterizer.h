@@ -52,7 +52,8 @@ namespace CudaRasterizer
 			float* depth,
 			bool antialiasing,
 			int* radii = nullptr,
-			bool debug = false);
+			bool debug = false,
+			int profile_mask = 0);
 
 		static void backward(
 			const int P, int D, int M, int R,

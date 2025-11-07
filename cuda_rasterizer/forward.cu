@@ -282,6 +282,9 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
+	uint32_t* __restrict__ gaussians_tested,
+	uint32_t* __restrict__ gaussians_contrib_count,
+	bool enable_profiling,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	const float* __restrict__ depths,
@@ -315,6 +318,7 @@ renderCUDA(
 	float T = 1.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
+	uint32_t contrib_count = 0;
 	float C[CHANNELS] = { 0 };
 
 	float expected_invdepth = 0.0f;
@@ -379,6 +383,7 @@ renderCUDA(
 			// Keep track of last range entry to update this
 			// pixel.
 			last_contributor = contributor;
+			contrib_count++;
 		}
 	}
 
@@ -388,6 +393,12 @@ renderCUDA(
 	{
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
+		// Save profiling counters only when profiling is enabled.
+		if (enable_profiling)
+		{
+			if (gaussians_tested) gaussians_tested[pix_id] = contributor;
+			if (gaussians_contrib_count) gaussians_contrib_count[pix_id] = contrib_count;
+		}
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 
@@ -406,6 +417,9 @@ void FORWARD::render(
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
+	uint32_t* gaussians_tested,
+	uint32_t* gaussians_contrib_count,
+	bool enable_profiling,
 	const float* bg_color,
 	float* out_color,
 	float* depths,
@@ -420,6 +434,9 @@ void FORWARD::render(
 		conic_opacity,
 		final_T,
 		n_contrib,
+		gaussians_tested,
+		gaussians_contrib_count,
+		enable_profiling,
 		bg_color,
 		out_color,
 		depths, 

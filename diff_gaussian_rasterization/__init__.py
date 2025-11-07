@@ -77,16 +77,26 @@ class _RasterizeGaussians(torch.autograd.Function):
             raster_settings.campos,
             raster_settings.prefiltered,
             raster_settings.antialiasing,
-            raster_settings.debug
+            raster_settings.debug,
+            getattr(raster_settings, 'profile_mask', 0)
         )
 
         # Invoke C++/CUDA rasterizer
-        num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths = _C.rasterize_gaussians(*args)
+        # HJ-Profiling: The C++ extension now optionally returns two additional
+        # profiling tensors (tests_per_pixel, contribs_per_pixel) at the
+        # end of the returned tuple. We always unpack them, but only
+        # return them to the caller when debug is enabled in
+        # raster_settings.
+        num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths, tests_per_pixel, contribs_per_pixel = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, opacities, geomBuffer, binningBuffer, imgBuffer)
+        # HJ-Profiling: If debug requested or profile_mask requests it,
+        # also return profiling tensors for analysis.
+        if raster_settings.debug or (getattr(raster_settings, 'profile_mask', 0) & 1):
+            return color, radii, invdepths, tests_per_pixel, contribs_per_pixel
         return color, radii, invdepths
 
     @staticmethod
@@ -119,9 +129,10 @@ class _RasterizeGaussians(torch.autograd.Function):
                 geomBuffer,
                 num_rendered,
                 binningBuffer,
-                imgBuffer,
-                raster_settings.antialiasing,
-                raster_settings.debug)
+            raster_settings.prefiltered,
+            raster_settings.antialiasing,
+            raster_settings.debug,
+            raster_settings.profile_mask)
 
         # Compute gradients for relevant tensors by invoking backward method
         grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)        
@@ -154,6 +165,7 @@ class GaussianRasterizationSettings(NamedTuple):
     prefiltered : bool
     debug : bool
     antialiasing : bool
+    profile_mask : int
 
 class GaussianRasterizer(nn.Module):
     def __init__(self, raster_settings):

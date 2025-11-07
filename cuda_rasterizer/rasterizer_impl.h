@@ -48,6 +48,11 @@ namespace CudaRasterizer
 		uint2* ranges;
 		uint32_t* n_contrib;
 		float* accum_alpha;
+		// Profiling buffers: per-pixel number of Gaussian candidates
+		// traversed and number of contributors that significantly
+		// affected the pixel.
+		uint32_t* gaussians_tested;
+		uint32_t* gaussians_contribs;
 
 		static ImageState fromChunk(char*& chunk, size_t N);
 	};
