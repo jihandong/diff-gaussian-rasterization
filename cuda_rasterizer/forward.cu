@@ -426,9 +426,9 @@ renderCUDA(
 					(unsigned)pix.x, (unsigned)pix.y, (unsigned)contrib_count,
 					feat_min[0], feat_min[1], feat_min[2], feat_max[0], feat_max[1], feat_max[2]);
 			}
-			}
+		}
+	}
 }
-
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2* ranges,
