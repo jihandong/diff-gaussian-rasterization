@@ -87,7 +87,31 @@ class _RasterizeGaussians(torch.autograd.Function):
         # end of the returned tuple. We always unpack them, but only
         # return them to the caller when debug is enabled in
         # raster_settings.
-        num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths, tests_per_pixel, contribs_per_pixel = _C.rasterize_gaussians(*args)
+        result = _C.rasterize_gaussians(*args)
+        # Handle multiple return arities for backward compatibility:
+        # 7: (rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths)
+        # 9: + tests_per_pixel, contribs_per_pixel
+        # 11: + loop_cycles, discrim_cycles
+        if isinstance(result, (list, tuple)):
+            if len(result) == 7:
+                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
+                 invdepths) = result
+                tests_per_pixel = torch.empty(0, dtype=torch.int32, device=color.device)
+                contribs_per_pixel = torch.empty(0, dtype=torch.int32, device=color.device)
+                loop_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
+                discrim_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
+            elif len(result) == 9:
+                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
+                 invdepths, tests_per_pixel, contribs_per_pixel) = result
+                loop_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
+                discrim_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
+            elif len(result) >= 11:
+                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
+                 invdepths, tests_per_pixel, contribs_per_pixel, loop_cycles, discrim_cycles) = result[:11]
+            else:
+                raise RuntimeError(f"Unexpected rasterizer return arity: {len(result)}")
+        else:
+            raise RuntimeError("Rasterizer returned non-tuple result")
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
@@ -95,8 +119,24 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, opacities, geomBuffer, binningBuffer, imgBuffer)
         # HJ-Profiling: If debug requested or profile_mask requests it,
         # also return profiling tensors for analysis.
-        if raster_settings.debug or (getattr(raster_settings, 'profile_mask', 0) & 1):
-            return color, radii, invdepths, tests_per_pixel, contribs_per_pixel
+        pmask = getattr(raster_settings, 'profile_mask', 0)
+        profiling_enabled = raster_settings.debug or (pmask & 1) or (pmask & 2)
+        if profiling_enabled:
+            # Always preserve ordering: tests/contrib first (may be empty placeholders), then timing (may be empty).
+            tests_out = tests_per_pixel
+            contribs_out = contribs_per_pixel
+            if tests_out.numel() == 0:
+                tests_out = torch.empty(0, dtype=torch.int32, device=color.device)
+            if contribs_out.numel() == 0:
+                contribs_out = torch.empty(0, dtype=torch.int32, device=color.device)
+            loop_out = loop_cycles if (pmask & 2) and loop_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
+            discrim_out = discrim_cycles if (pmask & 2) and discrim_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
+            # If timing disabled but counts enabled, loop/discrim will be empty tensors (still preserve tuple length logic below).
+            # Decide return arity: counts only -> 5, counts+timing -> 7
+            if (pmask & 2):
+                return (color, radii, invdepths, tests_out, contribs_out, loop_out, discrim_out)
+            else:
+                return (color, radii, invdepths, tests_out, contribs_out)
         return color, radii, invdepths
 
     @staticmethod

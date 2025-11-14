@@ -53,6 +53,10 @@ namespace CudaRasterizer
 		// affected the pixel.
 		uint32_t* gaussians_tested;
 		uint32_t* gaussians_contribs;
+		// Timing buffers (cycles): total per-pixel loop cycles and the
+		// accumulated cycles spent inside the color discrimination test.
+		uint64_t* loop_cycles;
+		uint64_t* discrim_cycles;
 
 		static ImageState fromChunk(char*& chunk, size_t N);
 	};

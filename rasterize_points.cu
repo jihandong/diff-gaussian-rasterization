@@ -33,7 +33,7 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -128,6 +128,8 @@ RasterizeGaussiansCUDA(
 	// knows how to obtain pointers into the imgBuffer chunk.
 	torch::Tensor tests_tensor = torch::empty({0}, int_opts);
 	torch::Tensor contribs_tensor = torch::empty({0}, int_opts);
+	torch::Tensor loop_cycles_tensor = torch::empty({0}, means3D.options().dtype(torch::kInt64));
+	torch::Tensor discrim_cycles_tensor = torch::empty({0}, means3D.options().dtype(torch::kInt64));
 	if (imgBuffer.numel() > 0)
 	{
 		char* chunk = reinterpret_cast<char*>(imgBuffer.contiguous().data_ptr());
@@ -142,9 +144,17 @@ RasterizeGaussiansCUDA(
 			cudaMemcpy(tests_tensor.data_ptr(), imgState.gaussians_tested, bytes, cudaMemcpyDeviceToDevice);
 			cudaMemcpy(contribs_tensor.data_ptr(), imgState.gaussians_contribs, bytes, cudaMemcpyDeviceToDevice);
 		}
+		if (imgState.loop_cycles != nullptr)
+		{
+			loop_cycles_tensor = torch::empty({H, W}, means3D.options().dtype(torch::kInt64)).contiguous();
+			discrim_cycles_tensor = torch::empty({H, W}, means3D.options().dtype(torch::kInt64)).contiguous();
+			size_t bytes64 = sizeof(uint64_t) * (size_t)W * (size_t)H;
+			cudaMemcpy(loop_cycles_tensor.data_ptr(), imgState.loop_cycles, bytes64, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(discrim_cycles_tensor.data_ptr(), imgState.discrim_cycles, bytes64, cudaMemcpyDeviceToDevice);
+		}
 	}
 
-	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, tests_tensor, contribs_tensor);
+	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, tests_tensor, contribs_tensor, loop_cycles_tensor, discrim_cycles_tensor);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

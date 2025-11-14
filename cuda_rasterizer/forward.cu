@@ -268,6 +268,46 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
 }
 
+__device__ inline bool
+checkColorDiscrimination(const float* C, float e, float T) {
+	// TODO: read lookup table: r g b e -> A B C
+	float a = e + 1.0, b = e + 10.0, c = e + 20.0;
+
+	// MDKL2RGB is a 3×3 constant  matrix (with the same coefficients,
+	// [[0.14, 0.17, 0.00], [−0.21,  −0.71, −0.07], [0.21, 0.72, 0.07]],
+	// as in Duinkharjav et al.
+	// --- S00 = A*(0.0196) + B*(0.0441) + C*(0.0441) ---
+    float S00 = fmaf(a, 0.0196f, fmaf(b, 0.0441f, c * 0.0441f));
+    // --- S11 = A*(0.0289) + B*(0.5041) + C*(0.5184) ---
+    float S11 = fmaf(a, 0.0289f, fmaf(b, 0.5041f, c * 0.5184f));
+    // --- S22 = A*(0.0000) + B*(0.0049) + C*(0.0049) ---
+    float S22 = fmaf(b, 0.0049f, c * 0.0049f);
+    // --- S01 = A*(0.0238) + B*(0.1491) + C*(0.1512) ---
+    float S01 = fmaf(a, 0.0238f, fmaf(b, 0.1491f, c * 0.1512f));
+    // --- S02 = A*(0.0000) + B*(0.0147) + C*(0.0147) ---
+    float S02 = fmaf(b, 0.0147f, c * 0.0147f);
+    // --- S12 = A*(0.0000) + B*(0.0497) + C*(0.0504) ---
+    float S12 = fmaf(b, 0.0497f, c * 0.0504f);
+
+	// Point 1, 2, 3: (1,0,0), (0,1,0), (0,0,1)
+    float max_val = fmaxf(fmaxf(S00, S11), S22);
+    // Point 4: (1,1,0) -> S00 + S11 + 2*S01
+    float v110 = fmaf(2.0f, S01, S00 + S11);
+    max_val = fmaxf(max_val, v110);
+    // Point 5: (1,0,1) -> S00 + S22 + 2*S02
+    float v101 = fmaf(2.0f, S02, S00 + S22);
+    max_val = fmaxf(max_val, v101);
+    // Point 6: (0,1,1) -> S11 + S22 + 2*S12
+    float v011 = fmaf(2.0f, S12, S11 + S22);
+    max_val = fmaxf(max_val, v011);
+    // Point 7: (1,1,1) -> (S00+S11+S22) + 2*(S01+S02+S12)
+    float v111 = fmaf(2.0f, S01 + S02 + S12, S00 + S11 + S22);
+    max_val = fmaxf(max_val, v111);
+
+	float T2 = T * T;
+	return (T2 * max_val <= 1.0f);
+}
+
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
@@ -284,7 +324,10 @@ renderCUDA(
 	uint32_t* __restrict__ n_contrib,
 	uint32_t* __restrict__ gaussians_tested,
 	uint32_t* __restrict__ gaussians_contrib_count,
+	uint64_t* __restrict__ loop_cycles,
+	uint64_t* __restrict__ discrim_cycles,
 	bool enable_profiling,
+	bool enable_timing,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	const float* __restrict__ depths,
@@ -322,6 +365,9 @@ renderCUDA(
 	float C[CHANNELS] = { 0 };
 
 	float expected_invdepth = 0.0f;
+	uint64_t start_loop = 0ULL;
+	uint64_t discrim_accum = 0ULL;
+	if (enable_timing && inside) start_loop = clock64();
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -380,6 +426,21 @@ renderCUDA(
 
 			T = test_T;
 
+			// Color discrimination timing + call
+			if (enable_timing) {
+				uint64_t ds = clock64();
+				bool keep = checkColorDiscrimination(C, C[0], T);
+				uint64_t de = clock64();
+				discrim_accum += (de - ds);
+				if (!keep) {
+					// Consume result to avoid optimization: adjust local var
+					// (no early termination yet, profiling only)
+					T = T; // no-op but depends on keep
+				}
+			} else {
+				(volatile bool)checkColorDiscrimination(C, C[0], T);
+			}
+
 			// Keep track of last range entry to update this
 			// pixel.
 			last_contributor = contributor;
@@ -398,6 +459,11 @@ renderCUDA(
 		{
 			if (gaussians_tested) gaussians_tested[pix_id] = contributor;
 			if (gaussians_contrib_count) gaussians_contrib_count[pix_id] = contrib_count;
+		}
+		// Save timing if enabled
+		if (enable_timing) {
+			if (loop_cycles) loop_cycles[pix_id] = clock64() - start_loop;
+			if (discrim_cycles) discrim_cycles[pix_id] = discrim_accum;
 		}
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
@@ -419,7 +485,10 @@ void FORWARD::render(
 	uint32_t* n_contrib,
 	uint32_t* gaussians_tested,
 	uint32_t* gaussians_contrib_count,
+	uint64_t* loop_cycles,
+	uint64_t* discrim_cycles,
 	bool enable_profiling,
+	bool enable_timing,
 	const float* bg_color,
 	float* out_color,
 	float* depths,
@@ -436,7 +505,10 @@ void FORWARD::render(
 		n_contrib,
 		gaussians_tested,
 		gaussians_contrib_count,
+		loop_cycles,
+		discrim_cycles,
 		enable_profiling,
+		enable_timing,
 		bg_color,
 		out_color,
 		depths, 
