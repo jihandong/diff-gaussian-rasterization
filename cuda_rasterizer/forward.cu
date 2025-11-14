@@ -11,6 +11,8 @@
 
 #include "forward.h"
 #include "auxiliary.h"
+#include <stdio.h>
+#include <float.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
@@ -323,6 +325,12 @@ renderCUDA(
 
 	float expected_invdepth = 0.0f;
 
+	// Instrumentation: per-thread feature value range seen during contributions
+	float feat_min[CHANNELS];
+	float feat_max[CHANNELS];
+	#pragma unroll
+	for (int ch = 0; ch < CHANNELS; ++ch) { feat_min[ch] = FLT_MAX; feat_max[ch] = -FLT_MAX; }
+
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
 	{
@@ -372,8 +380,12 @@ renderCUDA(
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
-			for (int ch = 0; ch < CHANNELS; ch++)
-				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			for (int ch = 0; ch < CHANNELS; ch++) {
+				float val = features[collected_id[j] * CHANNELS + ch];
+				if (val < feat_min[ch]) feat_min[ch] = val;
+				if (val > feat_max[ch]) feat_max[ch] = val;
+				C[ch] += val * alpha * T;
+			}
 
 			if(invdepth)
 			expected_invdepth += (1 / depths[collected_id[j]]) * alpha * T;
@@ -404,7 +416,17 @@ renderCUDA(
 
 		if (invdepth)
 		invdepth[pix_id] = expected_invdepth;// 1. / (expected_depth + T * 1e3);
-	}
+
+		// Debug print (sparse) of per-thread feature ranges to avoid flooding output
+		// Adjust the stride to 1 to print every pixel if desired.
+		if (enable_profiling) {
+			const unsigned stride_x = 256, stride_y = 256;
+			if ((pix.x % stride_x) == 0 && (pix.y % stride_y) == 0) {
+				printf("pix(%u,%u) contrib=%u feat_min=[%.5f %.5f %.5f] feat_max=[%.5f %.5f %.5f]\n",
+					(unsigned)pix.x, (unsigned)pix.y, (unsigned)contrib_count,
+					feat_min[0], feat_min[1], feat_min[2], feat_max[0], feat_max[1], feat_max[2]);
+			}
+			}
 }
 
 void FORWARD::render(
