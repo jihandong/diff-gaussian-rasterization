@@ -11,9 +11,62 @@
 
 #include "forward.h"
 #include "auxiliary.h"
+#include <cuda_runtime.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
+
+// --- Fake LUT for color discrimination (R,G,B,e -> a,b,c) ---
+// We keep a modest size to incur real global memory loads without huge footprint.
+namespace {
+	constexpr int CD_LUT_R = 32;   // R bins (use C[0])
+	constexpr int CD_LUT_G = 32;   // G bins (use C[1])
+	constexpr int CD_LUT_B = 32;   // B bins (use C[2])
+	constexpr int CD_LUT_E = 16;   // eccentricity bins (use e)
+	constexpr int CD_LUT_STRIDE = 3; // a,b,c per entry
+}
+
+__device__ float* d_cd_lut = nullptr; // device pointer to LUT data (global memory)
+
+__global__ void fill_cd_lut(float* lut, int LR, int LG, int LB, int LE)
+{
+	int cell = blockIdx.x * blockDim.x + threadIdx.x;
+	int total = LR * LG * LB * LE;
+	if (cell >= total) return;
+	int ebin = cell % LE; int t0 = cell / LE;
+	int bbin = t0 % LB;   int t1 = t0 / LB;
+	int gbin = t1 % LG;   int rbin = t1 / LG;
+
+	// Deterministic but non-trivial values; roughly in ranges ~[1, 30]
+	float fr = (rbin + 0.5f) / LR;
+	float fg = (gbin + 0.5f) / LG;
+	float fb = (bbin + 0.5f) / LB;
+	float fe = (ebin + 0.5f) / LE;
+	float a = 1.0f  + 0.25f * fr + 0.20f * fg + 0.15f * fb + 0.10f * fe;
+	float b = 10.0f + 0.45f * fr + 0.40f * fg + 0.25f * fb + 0.20f * fe;
+	float c = 20.0f + 0.65f * fr + 0.55f * fg + 0.35f * fb + 0.30f * fe;
+
+	int base = cell * CD_LUT_STRIDE;
+	lut[base + 0] = a;
+	lut[base + 1] = b;
+	lut[base + 2] = c;
+}
+
+static void ensure_cd_lut()
+{
+	static bool initialized = false;
+	if (initialized) return;
+	size_t cells = static_cast<size_t>(CD_LUT_R) * CD_LUT_G * CD_LUT_B * CD_LUT_E;
+	size_t bytes = cells * CD_LUT_STRIDE * sizeof(float);
+	float* ptr = nullptr;
+	cudaMalloc(&ptr, bytes);
+	int threads = 256;
+	int blocks = static_cast<int>((cells + threads - 1) / threads);
+	fill_cd_lut<<<blocks, threads>>>(ptr, CD_LUT_R, CD_LUT_G, CD_LUT_B, CD_LUT_E);
+	cudaDeviceSynchronize();
+	cudaMemcpyToSymbol(d_cd_lut, &ptr, sizeof(float*));
+	initialized = true;
+}
 
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
@@ -270,8 +323,23 @@ __global__ void preprocessCUDA(int P, int D, int M,
 
 __device__ inline bool
 checkColorDiscrimination(const float* C, float e, float T) {
-	// TODO: read lookup table: r g b e -> A B C
-	float a = e + 1.0, b = e + 10.0, c = e + 20.0;
+	// Lookup a,b,c from fake LUT in global memory to include memory latency.
+	// Quantize inputs: use C[0]->R, C[1]->G, C[2]->B, e->E.
+	// XXX: assume C and e are already clamped to [0,1]
+	float rclamp = fminf(fmaxf(C[0], 0.0f), 1.0f);
+	float gclamp = fminf(fmaxf(C[1], 0.0f), 1.0f);
+	float bclamp = fminf(fmaxf(C[2], 0.0f), 1.0f);
+	int ridx = (int)floorf(rclamp * (CD_LUT_R - 1));
+	int gidx = (int)floorf(gclamp * (CD_LUT_G - 1));
+	int bidx = (int)floorf(bclamp * (CD_LUT_B - 1));
+	int eidx = (int)floorf(e * (CD_LUT_E - 1));
+
+	int cell = (((ridx * CD_LUT_G + gidx) * CD_LUT_B + bidx) * CD_LUT_E +eidx);
+	int base = cell * CD_LUT_STRIDE;
+	const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
+	float a = vptr[0];
+	float b = vptr[1];
+	float c = vptr[2];
 
 	// MDKL2RGB is a 3×3 constant  matrix (with the same coefficients,
 	// [[0.14, 0.17, 0.00], [−0.21,  −0.71, −0.07], [0.21, 0.72, 0.07]],
@@ -429,7 +497,7 @@ renderCUDA(
 			// Color discrimination timing + call
 			if (enable_timing) {
 				uint64_t ds = clock64();
-				bool keep = checkColorDiscrimination(C, C[0], T);
+				bool keep = checkColorDiscrimination(C, 0.05f, T);
 				uint64_t de = clock64();
 				discrim_accum += (de - ds);
 				if (!keep) {
@@ -438,7 +506,7 @@ renderCUDA(
 					T = T; // no-op but depends on keep
 				}
 			} else {
-				(volatile bool)checkColorDiscrimination(C, C[0], T);
+				(volatile bool)checkColorDiscrimination(C, 0.05f, T);
 			}
 
 			// Keep track of last range entry to update this
@@ -494,6 +562,9 @@ void FORWARD::render(
 	float* depths,
 	float* depth)
 {
+	// Ensure fake LUT is ready (one-time init)
+	ensure_cd_lut();
+
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
