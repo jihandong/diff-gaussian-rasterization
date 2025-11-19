@@ -400,6 +400,7 @@ renderCUDA(
 
 	float expected_invdepth = 0.0f;
 	uint64_t start_loop = 0ULL;
+	uint64_t sync_loop = 0ULL;
 	uint64_t discrim_accum = 0ULL;
 	if (enable_timing && inside) start_loop = clock64();
 
@@ -420,7 +421,10 @@ renderCUDA(
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 		}
+		uint64_t tmp_clk1 = clock64(); // ensure all loads are done
 		block.sync();
+		uint64_t tmp_clk2 = clock64();
+		sync_loop += (tmp_clk2 - tmp_clk1);
 
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
@@ -496,7 +500,7 @@ renderCUDA(
 		}
 		// Save timing if enabled
 		if (enable_timing) {
-			if (loop_cycles) loop_cycles[pix_id] = clock64() - start_loop;
+			if (loop_cycles) loop_cycles[pix_id] = clock64() - start_loop - sync_loop;
 			if (discrim_cycles) discrim_cycles[pix_id] = discrim_accum;
 		}
 		for (int ch = 0; ch < CHANNELS; ch++)
