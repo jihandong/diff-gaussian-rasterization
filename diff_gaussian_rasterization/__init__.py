@@ -88,26 +88,28 @@ class _RasterizeGaussians(torch.autograd.Function):
         # return them to the caller when debug is enabled in
         # raster_settings.
         result = _C.rasterize_gaussians(*args)
-        # Handle multiple return arities for backward compatibility:
-        # 7: (rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths)
-        # 9: + tests_per_pixel, contribs_per_pixel
-        # 11: + loop_cycles, discrim_cycles
+        # Supported native C++ return arities (from _C):
+        # 7  -> base (no profiling buffers)
+        # 11 -> counts only (tests, contribs, first_true_at, post_false_after)
+        # 13 -> counts + timing (adds loop_cycles, discrim_cycles)
         if isinstance(result, (list, tuple)):
             if len(result) == 7:
                 (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
                  invdepths) = result
                 tests_per_pixel = torch.empty(0, dtype=torch.int32, device=color.device)
                 contribs_per_pixel = torch.empty(0, dtype=torch.int32, device=color.device)
+                first_true_at = torch.empty(0, dtype=torch.int32, device=color.device)
+                post_false_after = torch.empty(0, dtype=torch.int32, device=color.device)
                 loop_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
                 discrim_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
-            elif len(result) == 9:
-                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
-                 invdepths, tests_per_pixel, contribs_per_pixel) = result
+            elif len(result) == 11:
+                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths,
+                 tests_per_pixel, contribs_per_pixel, first_true_at, post_false_after) = result
                 loop_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
                 discrim_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
-            elif len(result) >= 11:
-                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
-                 invdepths, tests_per_pixel, contribs_per_pixel, loop_cycles, discrim_cycles) = result[:11]
+            elif len(result) == 13:
+                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths,
+                 tests_per_pixel, contribs_per_pixel, first_true_at, post_false_after, loop_cycles, discrim_cycles) = result
             else:
                 raise RuntimeError(f"Unexpected rasterizer return arity: {len(result)}")
         else:
@@ -117,26 +119,27 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, opacities, geomBuffer, binningBuffer, imgBuffer)
-        # HJ-Profiling: If debug requested or profile_mask requests it,
-        # also return profiling tensors for analysis.
+        # HJ-Profiling FIX: Previously the Python binding collapsed the
+        # 11/13 native arities into 5/7 by dropping first_true_at and
+        # post_false_after. This caused gaussian_renderer to misinterpret
+        # tuple lengths. We now propagate them so external code sees 3/7/9
+        # elements (base / counts / counts+timing) consistent with its
+        # expectations.
         pmask = getattr(raster_settings, 'profile_mask', 0)
         profiling_enabled = raster_settings.debug or (pmask & 1) or (pmask & 2)
         if profiling_enabled:
-            # Always preserve ordering: tests/contrib first (may be empty placeholders), then timing (may be empty).
-            tests_out = tests_per_pixel
-            contribs_out = contribs_per_pixel
-            if tests_out.numel() == 0:
-                tests_out = torch.empty(0, dtype=torch.int32, device=color.device)
-            if contribs_out.numel() == 0:
-                contribs_out = torch.empty(0, dtype=torch.int32, device=color.device)
-            loop_out = loop_cycles if (pmask & 2) and loop_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
-            discrim_out = discrim_cycles if (pmask & 2) and discrim_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
-            # If timing disabled but counts enabled, loop/discrim will be empty tensors (still preserve tuple length logic below).
-            # Decide return arity: counts only -> 5, counts+timing -> 7
+            # Always preserve ordering: tests, contribs, first_true_at, post_false_after, then optional timing.
+            tests_out = tests_per_pixel if tests_per_pixel.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
+            contribs_out = contribs_per_pixel if contribs_per_pixel.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
+            first_true_out = first_true_at if first_true_at.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
+            post_false_out = post_false_after if post_false_after.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
             if (pmask & 2):
-                return (color, radii, invdepths, tests_out, contribs_out, loop_out, discrim_out)
-            else:
-                return (color, radii, invdepths, tests_out, contribs_out)
+                loop_out = loop_cycles if loop_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
+                discrim_out = discrim_cycles if discrim_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
+                # counts + timing -> 9 elements total
+                return (color, radii, invdepths, tests_out, contribs_out, first_true_out, post_false_out, loop_out, discrim_out)
+            # counts only -> 7 elements total
+            return (color, radii, invdepths, tests_out, contribs_out, first_true_out, post_false_out)
         return color, radii, invdepths
 
     @staticmethod

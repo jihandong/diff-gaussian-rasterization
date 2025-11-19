@@ -358,6 +358,8 @@ renderCUDA(
 	uint32_t* __restrict__ n_contrib,
 	uint32_t* __restrict__ gaussians_tested,
 	uint32_t* __restrict__ gaussians_contrib_count,
+	uint32_t* __restrict__ gaussians_skip_count,
+	uint32_t* __restrict__ gaussians_false_count,
 	uint64_t* __restrict__ loop_cycles,
 	uint64_t* __restrict__ discrim_cycles,
 	bool enable_profiling,
@@ -396,6 +398,8 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	uint32_t contrib_count = 0;
+	uint32_t skip_count = 0;
+	uint32_t false_count = 0;
 	float C[CHANNELS] = { 0 };
 
 	float expected_invdepth = 0.0f;
@@ -425,12 +429,14 @@ renderCUDA(
 		block.sync();
 		uint64_t tmp_clk2 = clock64();
 		sync_loop += (tmp_clk2 - tmp_clk1);
+		bool early_stop = false;
 
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
 		{
 			// Keep track of current position in range
 			contributor++;
+			if (early_stop) skip_count++;
 
 			// Resample using conic matrix (cf. "Surface 
 			// Splatting" by Zwicker et al., 2001)
@@ -465,22 +471,21 @@ renderCUDA(
 			T = test_T;
 
 			// Color discrimination timing + call
+			bool keep;
 			if (enable_timing) {
 				uint64_t ds = clock64();
-				bool keep = checkColorDiscrimination(C, 0.05f, T);
+				keep = checkColorDiscrimination(C, 0.05f, T);
 				uint64_t de = clock64();
 				discrim_accum += (de - ds);
-				if (!keep) {
-					// Consume result to avoid optimization: adjust local var
-					// (no early termination yet, profiling only)
-					T = T; // no-op but depends on keep
-				}
 			} else {
-				(volatile bool)checkColorDiscrimination(C, 0.05f, T);
+				keep = checkColorDiscrimination(C, 0.05f, T);
 			}
 
-			// Keep track of last range entry to update this
-			// pixel.
+			if (keep) {
+				early_stop = true;
+			} else if (early_stop)
+				false_count++;
+
 			last_contributor = contributor;
 			contrib_count++;
 		}
@@ -497,6 +502,8 @@ renderCUDA(
 		{
 			if (gaussians_tested) gaussians_tested[pix_id] = contributor;
 			if (gaussians_contrib_count) gaussians_contrib_count[pix_id] = contrib_count;
+			if (gaussians_skip_count) gaussians_skip_count[pix_id] = skip_count;
+			if (gaussians_false_count) gaussians_false_count[pix_id] = false_count;
 		}
 		// Save timing if enabled
 		if (enable_timing) {
@@ -523,6 +530,8 @@ void FORWARD::render(
 	uint32_t* n_contrib,
 	uint32_t* gaussians_tested,
 	uint32_t* gaussians_contrib_count,
+	uint32_t* first_true_at,
+	uint32_t* post_false_after_first,
 	uint64_t* loop_cycles,
 	uint64_t* discrim_cycles,
 	bool enable_profiling,
@@ -546,6 +555,8 @@ void FORWARD::render(
 		n_contrib,
 		gaussians_tested,
 		gaussians_contrib_count,
+		first_true_at,
+		post_false_after_first,
 		loop_cycles,
 		discrim_cycles,
 		enable_profiling,

@@ -33,7 +33,11 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+// Return arities:
+// 7  -> base (no profiling)
+// 11 -> counts only (tests, contribs, first_true, post_false)
+// 13 -> counts + timing (adds loop_cycles, discrim_cycles)
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -130,6 +134,8 @@ RasterizeGaussiansCUDA(
 	torch::Tensor contribs_tensor = torch::empty({0}, int_opts);
 	torch::Tensor loop_cycles_tensor = torch::empty({0}, means3D.options().dtype(torch::kInt64));
 	torch::Tensor discrim_cycles_tensor = torch::empty({0}, means3D.options().dtype(torch::kInt64));
+	torch::Tensor first_true_tensor = torch::empty({0}, int_opts);
+	torch::Tensor post_false_tensor = torch::empty({0}, int_opts);
 	if (imgBuffer.numel() > 0)
 	{
 		char* chunk = reinterpret_cast<char*>(imgBuffer.contiguous().data_ptr());
@@ -139,10 +145,14 @@ RasterizeGaussiansCUDA(
 			// Create device tensor and copy device->device
 			tests_tensor = torch::empty({H, W}, int_opts).contiguous();
 			contribs_tensor = torch::empty({H, W}, int_opts).contiguous();
+			first_true_tensor = torch::empty({H, W}, int_opts).contiguous();
+			post_false_tensor = torch::empty({H, W}, int_opts).contiguous();
 			size_t bytes = sizeof(uint32_t) * (size_t)W * (size_t)H;
 			// device to device copy
 			cudaMemcpy(tests_tensor.data_ptr(), imgState.gaussians_tested, bytes, cudaMemcpyDeviceToDevice);
 			cudaMemcpy(contribs_tensor.data_ptr(), imgState.gaussians_contribs, bytes, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(first_true_tensor.data_ptr(), imgState.first_true_at, bytes, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(post_false_tensor.data_ptr(), imgState.post_false_after_first, bytes, cudaMemcpyDeviceToDevice);
 		}
 		if (imgState.loop_cycles != nullptr)
 		{
@@ -154,7 +164,7 @@ RasterizeGaussiansCUDA(
 		}
 	}
 
-	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, tests_tensor, contribs_tensor, loop_cycles_tensor, discrim_cycles_tensor);
+	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor, loop_cycles_tensor, discrim_cycles_tensor);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

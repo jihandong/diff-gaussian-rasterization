@@ -181,6 +181,8 @@ CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, s
 	// image chunk after the existing buffers.
 	obtain(chunk, img.gaussians_tested, N, 128);
 	obtain(chunk, img.gaussians_contribs, N, 128);
+	obtain(chunk, img.first_true_at, N, 128);
+	obtain(chunk, img.post_false_after_first, N, 128);
 	// Timing buffers (optional usage governed by profile_mask bits).
 	obtain(chunk, img.loop_cycles, N, 128);
 	obtain(chunk, img.discrim_cycles, N, 128);
@@ -349,6 +351,8 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.n_contrib,
 		imgState.gaussians_tested,
 		imgState.gaussians_contribs,
+		imgState.first_true_at,
+		imgState.post_false_after_first,
 		imgState.loop_cycles,
 		imgState.discrim_cycles,
 		enable_profiling,

@@ -61,6 +61,8 @@ namespace FORWARD
 		uint32_t* n_contrib,
 		uint32_t* gaussians_tested,
 		uint32_t* gaussians_contrib_count,
+		uint32_t* gaussians_skip_count,
+		uint32_t* gaussians_false_count,
 		uint64_t* loop_cycles,
 		uint64_t* discrim_cycles,
 		bool enable_profiling,
