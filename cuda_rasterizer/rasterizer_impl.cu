@@ -338,6 +338,7 @@ int CudaRasterizer::Rasterizer::forward(
     bool enable_profiling = (profile_mask & 1) != 0;
 	// Determine whether timing profiling is enabled (bit 1 -> value 2).
 	bool enable_timing = (profile_mask & 2) != 0;
+	bool enable_color_discrimination_stop = (profile_mask & 4) != 0;
 
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
@@ -357,6 +358,7 @@ int CudaRasterizer::Rasterizer::forward(
 		imgState.discrim_cycles,
 		enable_profiling,
 		enable_timing,
+		enable_color_discrimination_stop,
 		background,
 		out_color,
 		geomState.depths,

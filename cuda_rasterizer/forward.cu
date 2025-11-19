@@ -364,6 +364,7 @@ renderCUDA(
 	uint64_t* __restrict__ discrim_cycles,
 	bool enable_profiling,
 	bool enable_timing,
+	bool enable_color_discrimination_stop,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	const float* __restrict__ depths,
@@ -483,6 +484,8 @@ renderCUDA(
 
 			if (keep) {
 				early_stop = true;
+				if (enable_color_discrimination_stop)
+					done = true;
 			} else if (early_stop)
 				false_count++;
 
@@ -536,6 +539,7 @@ void FORWARD::render(
 	uint64_t* discrim_cycles,
 	bool enable_profiling,
 	bool enable_timing,
+	bool enable_color_discrimination_stop,
 	const float* bg_color,
 	float* out_color,
 	float* depths,
@@ -561,6 +565,7 @@ void FORWARD::render(
 		discrim_cycles,
 		enable_profiling,
 		enable_timing,
+		enable_color_discrimination_stop,
 		bg_color,
 		out_color,
 		depths, 

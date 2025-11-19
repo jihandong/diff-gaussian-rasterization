@@ -67,6 +67,7 @@ namespace FORWARD
 		uint64_t* discrim_cycles,
 		bool enable_profiling,
 		bool enable_timing,
+		bool enable_color_discrimination_stop,
 		const float* bg_color,
 		float* out_color,
 		float* depths,
