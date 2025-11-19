@@ -16,54 +16,20 @@
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
 
-// --- Fake LUT for color discrimination (R,G,B,e -> a,b,c) ---
-// We keep a modest size to incur real global memory loads without huge footprint.
-namespace {
-	constexpr int CD_LUT_R = 32;   // R bins (use C[0])
-	constexpr int CD_LUT_G = 32;   // G bins (use C[1])
-	constexpr int CD_LUT_B = 32;   // B bins (use C[2])
-	constexpr int CD_LUT_E = 16;   // eccentricity bins (use e)
-	constexpr int CD_LUT_STRIDE = 3; // a,b,c per entry
-}
-
+// --- Real LUT for color discrimination (R,G,B,e -> a,b,c) ---
+#include "real_cd_lut_data.h"
 __device__ float* d_cd_lut = nullptr; // device pointer to LUT data (global memory)
-
-__global__ void fill_cd_lut(float* lut, int LR, int LG, int LB, int LE)
-{
-	int cell = blockIdx.x * blockDim.x + threadIdx.x;
-	int total = LR * LG * LB * LE;
-	if (cell >= total) return;
-	int ebin = cell % LE; int t0 = cell / LE;
-	int bbin = t0 % LB;   int t1 = t0 / LB;
-	int gbin = t1 % LG;   int rbin = t1 / LG;
-
-	// Deterministic but non-trivial values; roughly in ranges ~[1, 30]
-	float fr = (rbin + 0.5f) / LR;
-	float fg = (gbin + 0.5f) / LG;
-	float fb = (bbin + 0.5f) / LB;
-	float fe = (ebin + 0.5f) / LE;
-	float a = 1.0f  + 0.25f * fr + 0.20f * fg + 0.15f * fb + 0.10f * fe;
-	float b = 10.0f + 0.45f * fr + 0.40f * fg + 0.25f * fb + 0.20f * fe;
-	float c = 20.0f + 0.65f * fr + 0.55f * fg + 0.35f * fb + 0.30f * fe;
-
-	int base = cell * CD_LUT_STRIDE;
-	lut[base + 0] = a;
-	lut[base + 1] = b;
-	lut[base + 2] = c;
-}
 
 static void ensure_cd_lut()
 {
 	static bool initialized = false;
 	if (initialized) return;
-	size_t cells = static_cast<size_t>(CD_LUT_R) * CD_LUT_G * CD_LUT_B * CD_LUT_E;
-	size_t bytes = cells * CD_LUT_STRIDE * sizeof(float);
+	size_t cells = static_cast<size_t>(CDLUT::R) * CDLUT::G * CDLUT::B * CDLUT::E;
+	size_t bytes = cells * CDLUT::STRIDE * sizeof(float);
 	float* ptr = nullptr;
 	cudaMalloc(&ptr, bytes);
-	int threads = 256;
-	int blocks = static_cast<int>((cells + threads - 1) / threads);
-	fill_cd_lut<<<blocks, threads>>>(ptr, CD_LUT_R, CD_LUT_G, CD_LUT_B, CD_LUT_E);
-	cudaDeviceSynchronize();
+	// Copy host real data table (placeholders to be filled by user).
+	cudaMemcpy(ptr, CDLUT::ellipsoids, bytes, cudaMemcpyHostToDevice);
 	cudaMemcpyToSymbol(d_cd_lut, &ptr, sizeof(float*));
 	initialized = true;
 }
@@ -329,33 +295,33 @@ checkColorDiscrimination(const float* C, float e, float T) {
 	float rclamp = fminf(fmaxf(C[0], 0.0f), 1.0f);
 	float gclamp = fminf(fmaxf(C[1], 0.0f), 1.0f);
 	float bclamp = fminf(fmaxf(C[2], 0.0f), 1.0f);
-	int ridx = (int)floorf(rclamp * (CD_LUT_R - 1));
-	int gidx = (int)floorf(gclamp * (CD_LUT_G - 1));
-	int bidx = (int)floorf(bclamp * (CD_LUT_B - 1));
-	int eidx = (int)floorf(e * (CD_LUT_E - 1));
+	int ridx = min((int)floorf(rclamp * CDLUT::R), CDLUT::R - 1);
+	int gidx = min((int)floorf(gclamp * CDLUT::G), CDLUT::G - 1);
+	int bidx = min((int)floorf(bclamp * CDLUT::B), CDLUT::B - 1);
+	int eidx = 0; // single eccentricity bin for now
 
-	int cell = (((ridx * CD_LUT_G + gidx) * CD_LUT_B + bidx) * CD_LUT_E +eidx);
-	int base = cell * CD_LUT_STRIDE;
+	int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
+	int base = cell * CDLUT::STRIDE;
 	const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
 	float a = vptr[0];
 	float b = vptr[1];
 	float c = vptr[2];
 
-	// MDKL2RGB is a 3×3 constant  matrix (with the same coefficients,
-	// [[0.14, 0.17, 0.00], [−0.21,  −0.71, −0.07], [0.21, 0.72, 0.07]],
-	// as in Duinkharjav et al.
-	// --- S00 = A*(0.0196) + B*(0.0441) + C*(0.0441) ---
-    float S00 = fmaf(a, 0.0196f, fmaf(b, 0.0441f, c * 0.0441f));
-    // --- S11 = A*(0.0289) + B*(0.5041) + C*(0.5184) ---
-    float S11 = fmaf(a, 0.0289f, fmaf(b, 0.5041f, c * 0.5184f));
-    // --- S22 = A*(0.0000) + B*(0.0049) + C*(0.0049) ---
-    float S22 = fmaf(b, 0.0049f, c * 0.0049f);
-    // --- S01 = A*(0.0238) + B*(0.1491) + C*(0.1512) ---
-    float S01 = fmaf(a, 0.0238f, fmaf(b, 0.1491f, c * 0.1512f));
-    // --- S02 = A*(0.0000) + B*(0.0147) + C*(0.0147) ---
-    float S02 = fmaf(b, 0.0147f, c * 0.0147f);
-    // --- S12 = A*(0.0000) + B*(0.0497) + C*(0.0504) ---
-    float S12 = fmaf(b, 0.0497f, c * 0.0504f);
+	// Compute S = M^T * diag(a,b,c) * M with explicit products so it auto-updates if M changes.
+	// M rows correspond to the DKL basis -> RGB columns mapping factors.
+	// If you modify M values, only adjust the M array below; formulas stay valid.
+	constexpr float M[3][3] = {
+		{ 10.60864043f,  23.50260678f,  21.01613594f },
+		{ -3.17452434f, -22.53568763f, -20.37323115f },
+		{ 0.20807273f,  154.02866473f, 153.78039361f }
+	};
+	// Diagonal scaling by a,b,c acts per row k: contribution d_k * M[k][i] * M[k][j].
+	float S00 = a*M[0][0]*M[0][0] + b*M[1][0]*M[1][0] + c*M[2][0]*M[2][0];
+	float S11 = a*M[0][1]*M[0][1] + b*M[1][1]*M[1][1] + c*M[2][1]*M[2][1];
+	float S22 = a*M[0][2]*M[0][2] + b*M[1][2]*M[1][2] + c*M[2][2]*M[2][2];
+	float S01 = a*M[0][0]*M[0][1] + b*M[1][0]*M[1][1] + c*M[2][0]*M[2][1];
+	float S02 = a*M[0][0]*M[0][2] + b*M[1][0]*M[1][2] + c*M[2][0]*M[2][2];
+	float S12 = a*M[0][1]*M[0][2] + b*M[1][1]*M[1][2] + c*M[2][1]*M[2][2];
 
 	// Point 1, 2, 3: (1,0,0), (0,1,0), (0,0,1)
     float max_val = fmaxf(fmaxf(S00, S11), S22);
@@ -479,7 +445,7 @@ renderCUDA(
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f)
+			if (test_T < 0.0001f) // 1/255 = 0.00392156862
 			{
 				done = true;
 				continue;
