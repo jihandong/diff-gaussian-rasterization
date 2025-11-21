@@ -68,6 +68,7 @@ namespace FORWARD
 		bool enable_profiling,
 		bool enable_timing,
 		bool enable_color_discrimination_stop,
+		bool enable_naive_color_discrimination,
 		bool use_mean_T_threshold,
 		const float* bg_color,
 		float* out_color,

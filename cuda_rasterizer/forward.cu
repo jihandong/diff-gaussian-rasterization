@@ -287,24 +287,32 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
 }
 
+
+
 __device__ inline bool
-checkColorDiscrimination(const float* C, float e, float T) {
+checkColorDiscrimination(const float* C, float e, float T, bool naive) {
 	// Lookup a,b,c from fake LUT in global memory to include memory latency.
 	// Quantize inputs: use C[0]->R, C[1]->G, C[2]->B, e->E.
-	float rclamp = fminf(fmaxf(C[0], 0.0f), 1.0f);
-	float gclamp = fminf(fmaxf(C[1], 0.0f), 1.0f);
-	float bclamp = fminf(fmaxf(C[2], 0.0f), 1.0f);
-	int ridx = min((int)floorf(rclamp * CDLUT::R), CDLUT::R - 1);
-	int gidx = min((int)floorf(gclamp * CDLUT::G), CDLUT::G - 1);
-	int bidx = min((int)floorf(bclamp * CDLUT::B), CDLUT::B - 1);
-	int eidx = 0; // single eccentricity bin for now
-
-	int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
-	int base = cell * CDLUT::STRIDE;
-	const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
-	float a = vptr[0];
-	float b = vptr[1];
-	float c = vptr[2];
+	float a, b, c;
+	if (naive) {
+		a = 611.953553845f;
+		b = 52555.162269876f;
+		c = 3212.488676033f;
+	} else {
+		float rclamp = fminf(fmaxf(C[0], 0.0f), 1.0f);
+		float gclamp = fminf(fmaxf(C[1], 0.0f), 1.0f);
+		float bclamp = fminf(fmaxf(C[2], 0.0f), 1.0f);
+		int ridx = min((int)floorf(rclamp * CDLUT::R), CDLUT::R - 1);
+		int gidx = min((int)floorf(gclamp * CDLUT::G), CDLUT::G - 1);
+		int bidx = min((int)floorf(bclamp * CDLUT::B), CDLUT::B - 1);
+		int eidx = 0; // single eccentricity bin for now
+		int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
+		int base = cell * CDLUT::STRIDE;
+		const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
+		float a = vptr[0];
+		float b = vptr[1];
+		float c = vptr[2];
+	}
 
 	// Compute S = M^T * diag(a,b,c) * M with explicit products so it auto-updates if M changes.
 	// M rows correspond to the DKL basis -> RGB columns mapping factors.
@@ -365,6 +373,7 @@ renderCUDA(
 	bool enable_profiling,
 	bool enable_timing,
 	bool enable_color_discrimination_stop,
+	bool enable_naive_color_discrimination,
 	bool use_mean_T_threshold,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
@@ -477,11 +486,11 @@ renderCUDA(
 			bool keep;
 			if (enable_timing) {
 				uint64_t ds = clock64();
-				keep = checkColorDiscrimination(C, 0.05f, T);
+				keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
 				uint64_t de = clock64();
 				discrim_accum += (de - ds);
 			} else {
-				keep = checkColorDiscrimination(C, 0.05f, T);
+				keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
 			}
 
 			if (keep) {
@@ -542,6 +551,7 @@ void FORWARD::render(
 	bool enable_profiling,
 	bool enable_timing,
 	bool enable_color_discrimination_stop,
+	bool enable_naive_color_discrimination,
 	bool use_mean_T_threshold,
 	const float* bg_color,
 	float* out_color,
@@ -569,6 +579,7 @@ void FORWARD::render(
 		enable_profiling,
 		enable_timing,
 		enable_color_discrimination_stop,
+		enable_naive_color_discrimination,
 		use_mean_T_threshold,
 		bg_color,
 		out_color,

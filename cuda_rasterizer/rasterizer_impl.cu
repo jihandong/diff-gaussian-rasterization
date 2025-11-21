@@ -341,6 +341,7 @@ int CudaRasterizer::Rasterizer::forward(
 	bool enable_color_discrimination_stop = (profile_mask & 4) != 0;
 	// New profile bit (8) selects higher early-stop threshold (mean final_T) instead of 1e-4.
 	bool use_mean_T_threshold = (profile_mask & 8) != 0;
+	bool enable_naive_color_discrimination = (profile_mask & 16) != 0;
 
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
@@ -361,6 +362,7 @@ int CudaRasterizer::Rasterizer::forward(
 		enable_profiling,
 		enable_timing,
 		enable_color_discrimination_stop,
+		enable_naive_color_discrimination,
 		use_mean_T_threshold,
 		background,
 		out_color,
