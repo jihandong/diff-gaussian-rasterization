@@ -365,6 +365,7 @@ renderCUDA(
 	bool enable_profiling,
 	bool enable_timing,
 	bool enable_color_discrimination_stop,
+	bool use_mean_T_threshold,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	const float* __restrict__ depths,
@@ -456,7 +457,8 @@ renderCUDA(
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
-			if (test_T < 0.0001f) // 1/255 = 0.00392156862
+			const float stop_threshold = use_mean_T_threshold ? 0.02419f : 0.0001f;
+			if (test_T < stop_threshold) // threshold configurable via profile bit
 			{
 				done = true;
 				continue;
@@ -540,6 +542,7 @@ void FORWARD::render(
 	bool enable_profiling,
 	bool enable_timing,
 	bool enable_color_discrimination_stop,
+	bool use_mean_T_threshold,
 	const float* bg_color,
 	float* out_color,
 	float* depths,
@@ -566,6 +569,7 @@ void FORWARD::render(
 		enable_profiling,
 		enable_timing,
 		enable_color_discrimination_stop,
+		use_mean_T_threshold,
 		bg_color,
 		out_color,
 		depths, 
