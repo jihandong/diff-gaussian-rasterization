@@ -466,7 +466,9 @@ renderCUDA(
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
-			const float stop_threshold = use_mean_T_threshold ? 0.02419f : 0.0001f;
+			// XXX: 02419f is another option, mean finalT of color discrimination result
+			// 0.015253371f is r/sqrt(3), with r=0.0264, which is the everage radius
+			const float stop_threshold = use_mean_T_threshold ? 0.015253371f : 0.0001f;
 			if (test_T < stop_threshold) // threshold configurable via profile bit
 			{
 				done = true;
