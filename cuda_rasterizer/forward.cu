@@ -374,6 +374,7 @@ renderCUDA(
 	bool enable_timing,
 	bool enable_color_discrimination_stop,
 	bool enable_naive_color_discrimination,
+	bool force_color_discrimination,
 	bool use_mean_T_threshold,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
@@ -484,23 +485,25 @@ renderCUDA(
 
 			T = test_T;
 
-			// Color discrimination timing + call
-			bool keep;
-			if (enable_timing) {
-				uint64_t ds = clock64();
-				keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
-				uint64_t de = clock64();
-				discrim_accum += (de - ds);
-			} else {
-				keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
-			}
+			// Color discrimination timing + call (gated by force or stop flag)
+			bool keep = false;
+			if (force_color_discrimination || enable_color_discrimination_stop) {
+				if (enable_timing) {
+					uint64_t ds = clock64();
+					keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
+					uint64_t de = clock64();
+					discrim_accum += (de - ds);
+				} else {
+					keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
+				}
 
-			if (keep) {
-				early_stop = true;
-				if (enable_color_discrimination_stop)
-					done = true;
-			} else if (early_stop)
-				false_count++;
+				if (keep) {
+					early_stop = true;
+					if (enable_color_discrimination_stop)
+						done = true;
+				} else if (early_stop)
+					false_count++;
+			}
 
 			last_contributor = contributor;
 			contrib_count++;
@@ -554,6 +557,7 @@ void FORWARD::render(
 	bool enable_timing,
 	bool enable_color_discrimination_stop,
 	bool enable_naive_color_discrimination,
+	bool force_color_discrimination,
 	bool use_mean_T_threshold,
 	const float* bg_color,
 	float* out_color,
@@ -582,6 +586,7 @@ void FORWARD::render(
 		enable_timing,
 		enable_color_discrimination_stop,
 		enable_naive_color_discrimination,
+		force_color_discrimination,
 		use_mean_T_threshold,
 		bg_color,
 		out_color,
