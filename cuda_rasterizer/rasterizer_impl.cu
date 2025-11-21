@@ -334,10 +334,10 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
-    // Determine whether profiling of per-pixel statistics is enabled
-    bool enable_profiling = (profile_mask & 1) != 0;
-	// Determine whether timing profiling is enabled (bit 1 -> value 2).
-	bool enable_timing = (profile_mask & 2) != 0;
+	// Always enable profiling and timing. Let upper layers decide whether to use outputs.
+	bool enable_profiling = true;
+	bool enable_timing = true;
+	// Keep color discrimination early-stop controlled by mask bit 2^2 (optional behavior).
 	bool enable_color_discrimination_stop = (profile_mask & 4) != 0;
 
 	CHECK_CUDA(FORWARD::render(

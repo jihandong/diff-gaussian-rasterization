@@ -88,8 +88,8 @@ class _RasterizeGaussians(torch.autograd.Function):
         # return them to the caller when debug is enabled in
         # raster_settings.
         result = _C.rasterize_gaussians(*args)
-        # Supported return arities:
-        # 7  -> base (no profiling enabled)
+        # Supported return arities from native:
+        # 7  -> base (no profiling)
         # 11 -> counts only (tests, contribs, first_true_at, post_false_after)
         # 13 -> counts + timing (adds loop_cycles, discrim_cycles)
         if isinstance(result, (list, tuple)):
@@ -119,27 +119,19 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, opacities, geomBuffer, binningBuffer, imgBuffer)
-        # HJ-Profiling: If debug requested or profile_mask requests it,
-        # also return profiling tensors for analysis.
-        pmask = getattr(raster_settings, 'profile_mask', 0)
-        profiling_enabled = raster_settings.debug or (pmask & 1) or (pmask & 2)
-        if profiling_enabled:
-            # Always preserve ordering: tests/contrib first (may be empty placeholders), then timing (may be empty).
-            tests_out = tests_per_pixel
-            contribs_out = contribs_per_pixel
-            if tests_out.numel() == 0:
-                tests_out = torch.empty(0, dtype=torch.int32, device=color.device)
-            if contribs_out.numel() == 0:
-                contribs_out = torch.empty(0, dtype=torch.int32, device=color.device)
-            loop_out = loop_cycles if (pmask & 2) and loop_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
-            discrim_out = discrim_cycles if (pmask & 2) and discrim_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
-            # If timing disabled but counts enabled, loop/discrim will be empty tensors (still preserve tuple length logic below).
-            # Decide return arity: counts only -> 5, counts+timing -> 7
-            if (pmask & 2):
-                return (color, radii, invdepths, tests_out, contribs_out, loop_out, discrim_out)
-            else:
-                return (color, radii, invdepths, tests_out, contribs_out)
-        return color, radii, invdepths
+        # Always return a fixed 9-tuple to the renderer, filling empties as needed.
+        # (color, radii, invdepths, tests, contribs, first_true, post_false, loop_cycles, discrim_cycles)
+        tests_out = tests_per_pixel if tests_per_pixel.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
+        contribs_out = contribs_per_pixel if contribs_per_pixel.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
+        first_true_out = first_true_at if first_true_at.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
+        post_false_out = post_false_after if post_false_after.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
+        loop_out = loop_cycles if loop_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
+        discrim_out = discrim_cycles if discrim_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
+        return (
+            color, radii, invdepths,
+            tests_out, contribs_out, first_true_out, post_false_out,
+            loop_out, discrim_out
+        )
 
     @staticmethod
     def backward(ctx, grad_out_color, _, grad_out_depth):
