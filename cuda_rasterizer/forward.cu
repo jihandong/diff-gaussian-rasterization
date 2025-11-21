@@ -311,9 +311,9 @@ checkColorDiscrimination(const float* C, float e, float T) {
 	// M rows correspond to the DKL basis -> RGB columns mapping factors.
 	// If you modify M values, only adjust the M array below; formulas stay valid.
 	constexpr float M[3][3] = {
-		{ 10.60864043f,  23.50260678f,  21.01613594f },
-		{ -3.17452434f, -22.53568763f, -20.37323115f },
-		{ 0.20807273f,  154.02866473f, 153.78039361f }
+		{ 0.49994452f,  5.05708608f,  0.16963708f },
+ 		{ 0.50001692f, -1.70920642f, -0.16789520f },
+ 		{ 0.50013441f,  0.11149119f,  1.16364789f }
 	};
 	// Diagonal scaling by a,b,c acts per row k: contribution d_k * M[k][i] * M[k][j].
 	float S00 = a*M[0][0]*M[0][0] + b*M[1][0]*M[1][0] + c*M[2][0]*M[2][0];
