@@ -291,7 +291,6 @@ __device__ inline bool
 checkColorDiscrimination(const float* C, float e, float T) {
 	// Lookup a,b,c from fake LUT in global memory to include memory latency.
 	// Quantize inputs: use C[0]->R, C[1]->G, C[2]->B, e->E.
-	// XXX: assume C and e are already clamped to [0,1]
 	float rclamp = fminf(fmaxf(C[0], 0.0f), 1.0f);
 	float gclamp = fminf(fmaxf(C[1], 0.0f), 1.0f);
 	float bclamp = fminf(fmaxf(C[2], 0.0f), 1.0f);
@@ -311,9 +310,9 @@ checkColorDiscrimination(const float* C, float e, float T) {
 	// M rows correspond to the DKL basis -> RGB columns mapping factors.
 	// If you modify M values, only adjust the M array below; formulas stay valid.
 	constexpr float M[3][3] = {
-		{ 0.49994452f,  5.05708608f,  0.16963708f },
- 		{ 0.50001692f, -1.70920642f, -0.16789520f },
- 		{ 0.50013441f,  0.11149119f,  1.16364789f }
+		{  0.46936262,  1.3974074 ,  0.13319896, },
+ 		{  0.15861781, -0.11838152, -0.04020387, },
+ 		{ -0.21692892, -0.58926161,  0.80596974, }
 	};
 	// The a b c is 1/L^2, L is the radius
 	// Diagonal scaling by a,b,c acts per row k: contribution d_k * M[k][i] * M[k][j].

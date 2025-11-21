@@ -13,7 +13,7 @@ constexpr int B = 8;    // B bins
 constexpr int E = 1;    // eccentricity bins (single bucket for now)
 constexpr int STRIDE = 3; // a,b,c per entry
 
-static const float ellipsoids[R*G*B*STRIDE] = {
+static const float ellipsoids[R*G*B*E*STRIDE] = {
 9073.196919272,7139291.306244734,308791.588366862,
 9869.312265297,939702.751446282,17273.864968938,
 8898.452241933,425818.677230413,6137.107946698,
