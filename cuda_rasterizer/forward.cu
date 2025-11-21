@@ -315,6 +315,7 @@ checkColorDiscrimination(const float* C, float e, float T) {
  		{ 0.50001692f, -1.70920642f, -0.16789520f },
  		{ 0.50013441f,  0.11149119f,  1.16364789f }
 	};
+	// The a b c is 1/L^2, L is the radius
 	// Diagonal scaling by a,b,c acts per row k: contribution d_k * M[k][i] * M[k][j].
 	float S00 = a*M[0][0]*M[0][0] + b*M[1][0]*M[1][0] + c*M[2][0]*M[2][0];
 	float S11 = a*M[0][1]*M[0][1] + b*M[1][1]*M[1][1] + c*M[2][1]*M[2][1];
