@@ -15,7 +15,12 @@
 #include <tuple>
 #include <string>
 	
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+// Forward return tuple (+final_T exposed):
+// Base (profiling off / legacy): num_rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, final_T
+// With counts: + tests, contribs, first_true, post_false
+// With timing: + loop_cycles, discrim_cycles
+// Arity progression: 8 / 12 / 14
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,

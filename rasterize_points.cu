@@ -33,11 +33,11 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-// Return arities:
-// 7  -> base (no profiling)
-// 11 -> counts only (tests, contribs, first_true, post_false)
-// 13 -> counts + timing (adds loop_cycles, discrim_cycles)
-std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+// Return arities (after exposing final_T):
+// 8  -> base (no profiling)
+// 12 -> counts only (tests, contribs, first_true, post_false)
+// 14 -> counts + timing (adds loop_cycles, discrim_cycles)
+std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -130,12 +130,14 @@ RasterizeGaussiansCUDA(
 	// Parse imgBuffer to extract profiling arrays (if present) and copy
 	// them into separate tensors to return to Python. ImageState::fromChunk
 	// knows how to obtain pointers into the imgBuffer chunk.
+	// Prepare tensors to expose profiling + final transmittance.
 	torch::Tensor tests_tensor = torch::empty({0}, int_opts);
 	torch::Tensor contribs_tensor = torch::empty({0}, int_opts);
 	torch::Tensor loop_cycles_tensor = torch::empty({0}, means3D.options().dtype(torch::kInt64));
 	torch::Tensor discrim_cycles_tensor = torch::empty({0}, means3D.options().dtype(torch::kInt64));
 	torch::Tensor first_true_tensor = torch::empty({0}, int_opts);
 	torch::Tensor post_false_tensor = torch::empty({0}, int_opts);
+	torch::Tensor final_T_tensor = torch::empty({H, W}, float_opts);
 	if (imgBuffer.numel() > 0)
 	{
 		char* chunk = reinterpret_cast<char*>(imgBuffer.contiguous().data_ptr());
@@ -162,9 +164,11 @@ RasterizeGaussiansCUDA(
 			cudaMemcpy(loop_cycles_tensor.data_ptr(), imgState.loop_cycles, bytes64, cudaMemcpyDeviceToDevice);
 			cudaMemcpy(discrim_cycles_tensor.data_ptr(), imgState.discrim_cycles, bytes64, cudaMemcpyDeviceToDevice);
 		}
+		// Always copy final_T (accum_alpha) out for analysis.
+		cudaMemcpy(final_T_tensor.data_ptr(), imgState.accum_alpha, sizeof(float) * (size_t)W * (size_t)H, cudaMemcpyDeviceToDevice);
 	}
 
-	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor, loop_cycles_tensor, discrim_cycles_tensor);
+	return std::make_tuple(rendered, out_color, radii, geomBuffer, binningBuffer, imgBuffer, out_invdepth, final_T_tensor, tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor, loop_cycles_tensor, discrim_cycles_tensor);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
