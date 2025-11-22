@@ -14,6 +14,7 @@
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <stdio.h>
 namespace cg = cooperative_groups;
 
 // --- Real LUT for color discrimination (R,G,B,e -> a,b,c) ---
@@ -567,6 +568,11 @@ void FORWARD::render(
 	// Ensure fake LUT is ready (one-time init)
 	ensure_cd_lut();
 
+	printf("CD:%d naiveCD:%d forceCD:%d naiveT:%d\n",
+		enable_color_discrimination_stop,
+		enable_naive_color_discrimination,
+		force_color_discrimination,
+		use_mean_T_threshold);
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
 		point_list,
