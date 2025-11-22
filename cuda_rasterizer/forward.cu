@@ -287,33 +287,9 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
 }
 
-
-
 __device__ inline bool
-checkColorDiscrimination(const float* C, float e, float T, bool naive) {
-	// Lookup a,b,c from fake LUT in global memory to include memory latency.
-	// Quantize inputs: use C[0]->R, C[1]->G, C[2]->B, e->E.
-	float a, b, c;
-	if (naive) {
-		a = 611.953553845f;
-		b = 52555.162269876f;
-		c = 3212.488676033f;
-	} else {
-		float rclamp = fminf(fmaxf(C[0], 0.0f), 1.0f);
-		float gclamp = fminf(fmaxf(C[1], 0.0f), 1.0f);
-		float bclamp = fminf(fmaxf(C[2], 0.0f), 1.0f);
-		int ridx = min((int)floorf(rclamp * CDLUT::R), CDLUT::R - 1);
-		int gidx = min((int)floorf(gclamp * CDLUT::G), CDLUT::G - 1);
-		int bidx = min((int)floorf(bclamp * CDLUT::B), CDLUT::B - 1);
-		int eidx = 0; // single eccentricity bin for now
-		int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
-		int base = cell * CDLUT::STRIDE;
-		const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
-		a = vptr[0];
-		b = vptr[1];
-		c = vptr[2];
-	}
-
+checkColorDiscriminationInternal(float a, float b, float c, float T)
+{
 	// Compute S = M^T * diag(a,b,c) * M with explicit products so it auto-updates if M changes.
 	// M rows correspond to the DKL basis -> RGB columns mapping factors.
 	// If you modify M values, only adjust the M array below; formulas stay valid.
@@ -348,6 +324,29 @@ checkColorDiscrimination(const float* C, float e, float T, bool naive) {
 
 	float T2 = T * T;
 	return (T2 * max_val <= 1.0f);
+}
+
+__device__ bool
+checkColorDiscriminationNaive(const float* C, float e, float T)
+{
+	constexpr float a = 611.953553845f;
+	constexpr float b = 52555.162269876f;
+	constexpr float c = 3212.488676033f;
+	return checkColorDiscriminationInternal(a, b, c, T);
+}
+
+__device__ bool
+checkColorDiscriminationLUT(const float* C, float e, float T) {
+	// Lookup a,b,c from fake LUT in global memory to include memory latency.
+	// Quantize inputs: use C[0]->R, C[1]->G, C[2]->B, e->E.
+	int ridx = min((int)floorf(C[0] * CDLUT::R), CDLUT::R - 1);
+	int gidx = min((int)floorf(C[1] * CDLUT::G), CDLUT::G - 1);
+	int bidx = min((int)floorf(C[2] * CDLUT::B), CDLUT::B - 1);
+	int eidx = 0; // single eccentricity bin for now
+	int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
+	int base = cell * CDLUT::STRIDE;
+	const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
+	return checkColorDiscriminationInternal(vptr[0], vptr[1], vptr[2], T);
 }
 
 // Main rasterization method. Collaboratively works on one tile per
@@ -420,6 +419,13 @@ renderCUDA(
 	uint64_t discrim_accum = 0ULL;
 	if (enable_timing && inside) start_loop = clock64();
 
+	typedef bool (*checkColorDiscrimination)(float*, float, float);
+	const checkColorDiscrimination checkCD = enable_naive_color_discrimination ?
+		checkColorDiscriminationNaive : checkColorDiscriminationLUT;
+	// XXX: 02419f is another option, mean finalT of color discrimination result
+	// 0.015253371f is r/sqrt(3), with r=0.0264, which is the everage radius
+	const float stop_threshold = use_mean_T_threshold ? 0.015253371f : 0.0001f;
+
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
 	{
@@ -467,9 +473,6 @@ renderCUDA(
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
-			// XXX: 02419f is another option, mean finalT of color discrimination result
-			// 0.015253371f is r/sqrt(3), with r=0.0264, which is the everage radius
-			const float stop_threshold = use_mean_T_threshold ? 0.015253371f : 0.0001f;
 			if (test_T < stop_threshold) // threshold configurable via profile bit
 			{
 				done = true;
@@ -490,11 +493,11 @@ renderCUDA(
 			if (force_color_discrimination || enable_color_discrimination_stop) {
 				if (enable_timing) {
 					uint64_t ds = clock64();
-					keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
+					keep = checkCD(C, 0.05f, T);
 					uint64_t de = clock64();
 					discrim_accum += (de - ds);
 				} else {
-					keep = checkColorDiscrimination(C, 0.05f, T, enable_naive_color_discrimination);
+					keep = checkCD(C, 0.05f, T);
 				}
 
 				if (keep) {
