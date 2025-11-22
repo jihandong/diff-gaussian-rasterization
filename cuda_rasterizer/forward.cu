@@ -14,6 +14,7 @@
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <stdio.h>
 namespace cg = cooperative_groups;
 
 // --- Real LUT for color discrimination (R,G,B,e -> a,b,c) ---
@@ -24,6 +25,7 @@ static void ensure_cd_lut()
 {
 	static bool initialized = false;
 	if (initialized) return;
+	printf("Initializing color discrimination LUT in GPU memory...\n");
 	size_t cells = static_cast<size_t>(CDLUT::R) * CDLUT::G * CDLUT::B * CDLUT::E;
 	size_t bytes = cells * CDLUT::STRIDE * sizeof(float);
 	float* ptr = nullptr;
@@ -419,7 +421,7 @@ renderCUDA(
 	uint64_t discrim_accum = 0ULL;
 	if (enable_timing && inside) start_loop = clock64();
 
-	typedef bool (*checkColorDiscrimination)(float*, float, float);
+	typedef bool (*checkColorDiscrimination)(const float*, float, float);
 	const checkColorDiscrimination checkCD = enable_naive_color_discrimination ?
 		checkColorDiscriminationNaive : checkColorDiscriminationLUT;
 	// XXX: 02419f is another option, mean finalT of color discrimination result
