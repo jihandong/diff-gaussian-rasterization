@@ -310,9 +310,9 @@ checkColorDiscrimination(const float* C, float e, float T, bool naive) {
 		int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
 		int base = cell * CDLUT::STRIDE;
 		const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
-		float a = vptr[0];
-		float b = vptr[1];
-		float c = vptr[2];
+		a = vptr[0];
+		b = vptr[1];
+		c = vptr[2];
 	}
 
 	// Compute S = M^T * diag(a,b,c) * M with explicit products so it auto-updates if M changes.
