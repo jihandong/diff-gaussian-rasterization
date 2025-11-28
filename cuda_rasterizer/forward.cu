@@ -318,32 +318,28 @@ checkColorDiscriminationLUT(const float* C, float e, float T) {
  		{  0.15861781, -0.11838152, -0.04020387, },
  		{ -0.21692892, -0.58926161,  0.80596974, }
 	};
-	// The a b c is 1/L^2, L is the radius
-	// Diagonal scaling by a,b,c acts per row k: contribution d_k * M[k][i] * M[k][j].
-	float S00 = a*M[0][0]*M[0][0] + b*M[1][0]*M[1][0] + c*M[2][0]*M[2][0];
-	float S11 = a*M[0][1]*M[0][1] + b*M[1][1]*M[1][1] + c*M[2][1]*M[2][1];
-	float S22 = a*M[0][2]*M[0][2] + b*M[1][2]*M[1][2] + c*M[2][2]*M[2][2];
-	float S01 = a*M[0][0]*M[0][1] + b*M[1][0]*M[1][1] + c*M[2][0]*M[2][1];
-	float S02 = a*M[0][0]*M[0][2] + b*M[1][0]*M[1][2] + c*M[2][0]*M[2][2];
-	float S12 = a*M[0][1]*M[0][2] + b*M[1][1]*M[1][2] + c*M[2][1]*M[2][2];
-
-	// Point 1, 2, 3: (1,0,0), (0,1,0), (0,0,1)
-    float max_val = fmaxf(fmaxf(S00, S11), S22);
-    // Point 4: (1,1,0) -> S00 + S11 + 2*S01
-    float v110 = fmaf(2.0f, S01, S00 + S11);
-    max_val = fmaxf(max_val, v110);
-    // Point 5: (1,0,1) -> S00 + S22 + 2*S02
-    float v101 = fmaf(2.0f, S02, S00 + S22);
-    max_val = fmaxf(max_val, v101);
-    // Point 6: (0,1,1) -> S11 + S22 + 2*S12
-    float v011 = fmaf(2.0f, S12, S11 + S22);
-    max_val = fmaxf(max_val, v011);
-    // Point 7: (1,1,1) -> (S00+S11+S22) + 2*(S01+S02+S12)
-    float v111 = fmaf(2.0f, S01 + S02 + S12, S00 + S11 + S22);
-    max_val = fmaxf(max_val, v111);
-
-	float T2 = T * T;
-	return (T2 * max_val <= 1.0f);
+#define SQ(x) ((x)*(x))
+    // P1: (1,0,0)
+    float max_val = a * SQ(M[0][0]) + b * SQ(M[1][0]) + c * SQ(M[2][0]);
+    // P2: (0,1,0)
+    max_val = fmaxf(max_val, a * SQ(M[0][1]) + b * SQ(M[1][1]) + c * SQ(M[2][1]));
+    // P3: (0,0,1)
+    max_val = fmaxf(max_val, a * SQ(M[0][2]) + b * SQ(M[1][2]) + c * SQ(M[2][2]));
+    // P4: (1,1,0)
+    max_val = fmaxf(max_val, a * SQ(M[0][0] + M[0][1]) + b * SQ(M[1][0] + M[1][1]) + c * SQ(M[2][0] + M[2][1])
+    );
+    // P5: (1,0,1)
+    max_val = fmaxf(max_val, a * SQ(M[0][0] + M[0][2]) + b * SQ(M[1][0] + M[1][2]) + c * SQ(M[2][0] + M[2][2])
+    );
+    // P6: (0,1,1)
+    max_val = fmaxf(max_val, a * SQ(M[0][1] + M[0][2]) + b * SQ(M[1][1] + M[1][2]) + c * SQ(M[2][1] + M[2][2])
+    );
+    // P7: (1,1,1)
+    max_val = fmaxf(max_val, a * SQ(M[0][0] + M[0][1] + M[0][2]) + b * SQ(M[1][0] + M[1][1] + M[1][2]) + c * SQ(M[2][0] + M[2][1] + M[2][2])
+    );
+#undef SQ
+    // 原逻辑 T^2 * max_val <= 1.0f
+    return ((T * T) * max_val <= 1.0f);
 }
 
 // Main rasterization method. Collaboratively works on one tile per
