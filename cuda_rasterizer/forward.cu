@@ -320,26 +320,65 @@ checkColorDiscriminationLUT(const float* C, float e, float T) {
 	};
 	// The a b c is 1/L^2, L is the radius
 	// Diagonal scaling by a,b,c acts per row k: contribution d_k * M[k][i] * M[k][j].
-	float S00 = a*(M[0][0]*M[0][0]) + b*(M[1][0]*M[1][0]) + c*(M[2][0]*M[2][0]);
-	float S11 = a*(M[0][1]*M[0][1]) + b*(M[1][1]*M[1][1]) + c*(M[2][1]*M[2][1]);
-	float S22 = a*(M[0][2]*M[0][2]) + b*(M[1][2]*M[1][2]) + c*(M[2][2]*M[2][2]);
-	float S01 = a*(M[0][0]*M[0][1]) + b*(M[1][0]*M[1][1]) + c*(M[2][0]*M[2][1]);
-	float S02 = a*(M[0][0]*M[0][2]) + b*(M[1][0]*M[1][2]) + c*(M[2][0]*M[2][2]);
-	float S12 = a*(M[0][1]*M[0][2]) + b*(M[1][1]*M[1][2]) + c*(M[2][1]*M[2][2]);
+	constexpr float M0000 = M[0][0] * M[0][0];
+	constexpr float M1010 = M[1][0] * M[1][0];
+	constexpr float M2020 = M[2][0] * M[2][0];
+
+	constexpr float M0101 = M[0][1] * M[0][1];
+	constexpr float M1111 = M[1][1] * M[1][1];
+	constexpr float M2121 = M[2][1] * M[2][1];
+
+	constexpr float M0202 = M[0][2] * M[0][2];
+	constexpr float M1212 = M[1][2] * M[1][2];
+	constexpr float M2222 = M[2][2] * M[2][2];
+
+	constexpr float M0001 = M[0][0] * M[0][1];
+	constexpr float M1011 = M[1][0] * M[1][1];
+	constexpr float M2021 = M[2][0] * M[2][1];
+
+	constexpr float M0002 = M[0][0] * M[0][2];
+	constexpr float M1012 = M[1][0] * M[1][2];
+	constexpr float M2022 = M[2][0] * M[2][2];
+
+	constexpr float M0102 = M[0][1] * M[0][2];
+	constexpr float M1112 = M[1][1] * M[1][2];
+	constexpr float M2122 = M[2][1] * M[2][2];
 
 	// Point 1, 2, 3: (1,0,0), (0,1,0), (0,0,1)
+	float S00 = a*M0000 + b*M1010 + c*M2020;
+	float S11 = a*M0101 + b*M1111 + c*M2121;
+	float S22 = a*M0202 + b*M1212 + c*M2222;
+	// float S01 = a*M0001 + b*M1011 + c*M2021;
+	// float S02 = a*M0002 + b*M1012 + c*M2022;
+	// float S12 = a*M0102 + b*M1112 + c*M2122;
     float max_val = fmaxf(fmaxf(S00, S11), S22);
-    // Point 4: (1,1,0) -> S00 + S11 + 2*S01
-    float v110 = fmaf(2.0f, S01, S00 + S11);
+
+	// Point 4: (1,1,0) -> S00 + S11 + 2*S01
+	constexpr float av110 = M0000 + M0101 + 2.0 * M0001;
+	constexpr float bv110 = M1010 + M1111 + 2.0 * M1011;
+	constexpr float cv110 = M2020 + M2121 + 2.0 * M2021;
+    float v110 = a * av110 + b * bv110 + c * cv110;
     max_val = fmaxf(max_val, v110);
-    // Point 5: (1,0,1) -> S00 + S22 + 2*S02
-    float v101 = fmaf(2.0f, S02, S00 + S22);
+
+	// Point 5: (1,0,1)
+    constexpr float av101 = M0000 + M0202 + 2.0f * M0002;
+    constexpr float bv101 = M1010 + M1212 + 2.0f * M1012;
+    constexpr float cv101 = M2020 + M2222 + 2.0f * M2022;
+    float v101 = a * av101 + b * bv101 + c * cv101;
     max_val = fmaxf(max_val, v101);
-    // Point 6: (0,1,1) -> S11 + S22 + 2*S12
-    float v011 = fmaf(2.0f, S12, S11 + S22);
+
+	// Point 6: (0,1,1)
+    constexpr float av011 = M0101 + M0202 + 2.0f * M0102;
+    constexpr float bv011 = M1111 + M1212 + 2.0f * M1112;
+    constexpr float cv011 = M2121 + M2222 + 2.0f * M2122;
+    float v011 = a * av011 + b * bv011 + c * cv011;
     max_val = fmaxf(max_val, v011);
+
     // Point 7: (1,1,1) -> (S00+S11+S22) + 2*(S01+S02+S12)
-    float v111 = fmaf(2.0f, S01 + S02 + S12, S00 + S11 + S22);
+    constexpr float av111 = (M0000 + M0101 + M0202) + 2.0f * (M0001 + M0002 + M0102);
+    constexpr float bv111 = (M1010 + M1111 + M1212) + 2.0f * (M1011 + M1012 + M1112);
+    constexpr float cv111 = (M2020 + M2121 + M2222) + 2.0f * (M2021 + M2022 + M2122);
+    float v111 = a * av111 + b * bv111 + c * cv111;
     max_val = fmaxf(max_val, v111);
 
 	float T2 = T * T;
