@@ -290,7 +290,33 @@ __global__ void preprocessCUDA(int P, int D, int M,
 }
 
 __device__ inline bool
-checkColorDiscriminationLUT(const float* C, float e, float T) {
+computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
+{
+	int32_t w2 = w >> 1;
+	int32_t dx = x - w2;
+	int32_t h2 = h >> 1;
+	int32_t dy = y - h2;
+	float cos2 = (float)(w2 * w2) / (float)(dx * dx + dy * dy + 1);
+	constexpr int ENTRYNB = 3;
+	constexpr float T[ENTRYNB][4] = {
+		// cosine^2, rg, yb, lum (factors for 1/length^2)
+		{ 0.671010072, 0.035972874, 0.105579816, 0.136142211 }, // 35 degrees
+		{ 0.821393805, 0.201004481, 0.247712046, 0.479130906 }, // 25 degrees
+		{ 0.969846310, 1.0, 1.0, 1.0 } // 10 degrees
+	};
+	for (int i = 0; i < ENTRYNB; i++) {
+		if (cos2 <= T[i][0]) {
+			f[0] = T[i][1];
+			f[1] = T[i][2];
+			f[2] = T[i][3];
+			return true;
+		}
+	}
+	return false;
+}
+
+__device__ inline bool
+checkColorDiscriminationLUT(const float* C, float T, float* cdFactor) {
 	// Lookup a,b,c from fake LUT in global memory to include memory latency.
 	// Quantize inputs: use C[0]->R, C[1]->G, C[2]->B, e->E.
 	float a, b, c;
@@ -298,8 +324,9 @@ checkColorDiscriminationLUT(const float* C, float e, float T) {
 	int ridx = min((int)floorf(C[0] * CDLUT::R), CDLUT::R - 1);
 	int gidx = min((int)floorf(C[1] * CDLUT::G), CDLUT::G - 1);
 	int bidx = min((int)floorf(C[2] * CDLUT::B), CDLUT::B - 1);
-	int eidx = 0; // single eccentricity bin for now
-	int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
+	//int eidx = 0; // single eccentricity bin for now
+	//int cell = (((ridx * CDLUT::G + gidx) * CDLUT::B + bidx) * CDLUT::E +eidx);
+	int cell = (ridx * CDLUT::G + gidx) * CDLUT::B + bidx;
 	int base = cell * CDLUT::STRIDE;
 	const volatile float* vptr = (const volatile float*)(d_cd_lut + base);
 	a = vptr[0];
@@ -310,6 +337,9 @@ checkColorDiscriminationLUT(const float* C, float e, float T) {
 	b = 52555.162269876f;
 	c = 3212.488676033f;
 #endif
+	a *= cdFactor[0];
+	b *= cdFactor[1];
+	c *= cdFactor[2];
 	// Compute S = M^T * diag(a,b,c) * M with explicit products so it auto-updates if M changes.
 	// M rows correspond to the DKL basis -> RGB columns mapping factors.
 	// If you modify M values, only adjust the M array below; formulas stay valid.
@@ -424,6 +454,9 @@ renderCUDA(
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y };
+	float cdFactor[3];
+	if (enable_naive_color_discrimination)
+		enable_naive_color_discrimination = computeEccentricityFactor(W, H, pix.x, pix.y, cdFactor);
 
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
@@ -522,20 +555,20 @@ renderCUDA(
 			T = test_T;
 
 			// Color discrimination timing + call (gated by force or stop flag)
-			bool keep = false;
-			if (force_color_discrimination || enable_color_discrimination_stop) {
+			bool cond = false;
+			if (enable_color_discrimination_stop) {
 				if (enable_timing) {
 					uint64_t ds = clock64();
-					keep = checkColorDiscriminationLUT(C, 0.05f, T);
+					cond = checkColorDiscriminationLUT(C, T, cdFactor);
 					uint64_t de = clock64();
 					discrim_accum += (de - ds);
 				} else {
-					keep = checkColorDiscriminationLUT(C, 0.05f, T);
+					cond = checkColorDiscriminationLUT(C, T, cdFactor);
 				}
 
-				if (keep) {
+				if (cond) {
 					early_stop = true;
-					if (enable_color_discrimination_stop)
+					if (!force_color_discrimination)
 						done = true;
 				} else if (early_stop)
 					false_count++;
