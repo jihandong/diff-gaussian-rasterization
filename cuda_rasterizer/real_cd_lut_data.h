@@ -7,7 +7,7 @@
 // Replace 0.0f placeholders with your real data.
 
 namespace CDLUT {
-#if 0
+#if 1
 constexpr int R = 8;    // R bins
 constexpr int G = 8;    // G bins
 constexpr int B = 8;    // B bins

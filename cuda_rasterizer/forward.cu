@@ -297,10 +297,10 @@ computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 	int32_t h2 = h >> 1;
 	int32_t dy = y - h2;
 	float cos2 = (float)(w2 * w2) / (float)(dx * dx + dy * dy + 1);
-	constexpr int ENTRYNB = 3;
+	constexpr int ENTRYNB = 2;
 	constexpr float T[ENTRYNB][4] = {
 		// cosine^2, rg, yb, lum (factors for 1/length^2)
-		{ 0.671010072, 0.035972874, 0.105579816, 0.136142211 }, // 35 degrees
+		//{ 0.671010072, 0.035972874, 0.105579816, 0.136142211 }, // 35 degrees
 		{ 0.821393805, 0.201004481, 0.247712046, 0.479130906 }, // 25 degrees
 		{ 0.969846310, 1.0, 1.0, 1.0 } // 10 degrees
 	};
