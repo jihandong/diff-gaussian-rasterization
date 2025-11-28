@@ -26,7 +26,7 @@ static void ensure_cd_lut()
 	static bool initialized = false;
 	if (initialized) return;
 	printf("Initializing color discrimination LUT in GPU memory...\n");
-	size_t cells = static_cast<size_t>(CDLUT::R) * CDLUT::G * CDLUT::B * CDLUT::E;
+	size_t cells = static_cast<size_t>(CDLUT::R) * CDLUT::G * CDLUT::B;
 	size_t bytes = cells * CDLUT::STRIDE * sizeof(float);
 	float* ptr = nullptr;
 	cudaMalloc(&ptr, bytes);
@@ -296,16 +296,16 @@ computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 	int32_t dx = x - w2;
 	int32_t h2 = h >> 1;
 	int32_t dy = y - h2;
-	float cos2 = (float)(w2 * w2) / (float)(dx * dx + dy * dy + 1);
+	float tan2 =  (float)(dx * dx + dy * dy) / (float)(w2 * w2);
 	constexpr int ENTRYNB = 2;
 	constexpr float T[ENTRYNB][4] = {
 		// cosine^2, rg, yb, lum (factors for 1/length^2)
-		//{ 0.671010072, 0.035972874, 0.105579816, 0.136142211 }, // 35 degrees
-		{ 0.821393805, 0.201004481, 0.247712046, 0.479130906 }, // 25 degrees
-		{ 0.969846310, 1.0, 1.0, 1.0 } // 10 degrees
+		// { 0.4902908f, 0.035972874, 0.105579816, 0.136142211 }, // 35 degrees
+		{ 0.2174422f, 0.201004481, 0.247712046, 0.479130906 }, // 25 degrees
+		{ 0.0310912f, 1.0, 1.0, 1.0 } // 10 degrees
 	};
 	for (int i = 0; i < ENTRYNB; i++) {
-		if (cos2 <= T[i][0]) {
+		if (tan2 >= T[i][0]) {
 			f[0] = T[i][1];
 			f[1] = T[i][2];
 			f[2] = T[i][3];
