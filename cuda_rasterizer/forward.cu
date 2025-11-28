@@ -297,10 +297,10 @@ computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 	int32_t h2 = h >> 1;
 	int32_t dy = y - h2;
 	float tan2 =  (float)(dx * dx + dy * dy) / (float)(w2 * w2);
-	constexpr int ENTRYNB = 2;
+	constexpr int ENTRYNB = 3;
 	constexpr float T[ENTRYNB][4] = {
 		// cosine^2, rg, yb, lum (factors for 1/length^2)
-		// { 0.4902908f, 0.035972874, 0.105579816, 0.136142211 }, // 35 degrees
+		{ 0.4902908f, 0.035972874, 0.105579816, 0.136142211 }, // 35 degrees
 		{ 0.2174422f, 0.201004481, 0.247712046, 0.479130906 }, // 25 degrees
 		{ 0.0310912f, 1.0, 1.0, 1.0 } // 10 degrees
 	};
@@ -332,7 +332,7 @@ checkColorDiscriminationLUT(const float* C, float T, float* cdFactor) {
 	a = vptr[0];
 	b = vptr[1];
 	c = vptr[2];
-#else
+#else // naive single JND
 	a = 611.953553845f;
 	b = 52555.162269876f;
 	c = 3212.488676033f;
@@ -438,7 +438,7 @@ renderCUDA(
 	bool enable_profiling,
 	bool enable_timing,
 	bool enable_color_discrimination_stop,
-	bool enable_naive_color_discrimination,
+	bool enable_naive_color_discrimination, // deprecated
 	bool force_color_discrimination,
 	bool use_mean_T_threshold,
 	const float* __restrict__ bg_color,
@@ -454,14 +454,14 @@ renderCUDA(
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
 	float2 pixf = { (float)pix.x, (float)pix.y };
-	float cdFactor[3];
-	if (enable_naive_color_discrimination)
-		enable_naive_color_discrimination = computeEccentricityFactor(W, H, pix.x, pix.y, cdFactor);
 
 	// Check if this thread is associated with a valid pixel or outside.
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
+	float cdFactor[3];
+	if (enable_color_discrimination_stop)
+		enable_color_discrimination_stop = computeEccentricityFactor(W, H, pix.x, pix.y, cdFactor);
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
