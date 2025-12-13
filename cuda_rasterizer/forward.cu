@@ -491,8 +491,8 @@ renderCUDA(
 	// XXX: 02419f is another option, mean finalT of color discrimination result
 	// 0.015253371f is r/sqrt(3), with r=0.0264, which is the everage radius
 	const float stop_threshold = use_mean_T_threshold ? 0.015253371f : 0.0001f;
-	constexpr bool todo_ratio = 0.7f; // only do color discrimination after this ratio of Gaussians to avoid wasting time
-	int todo_threshold = toDo * todo_ratio;
+	constexpr float todo_remain_ratio = 0.3f; // only do color discrimination in last 30% of Gaussians
+	int todo_threshold = toDo * todo_remain_ratio;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
