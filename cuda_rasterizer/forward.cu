@@ -18,20 +18,22 @@
 namespace cg = cooperative_groups;
 
 // --- Real LUT for color discrimination (R,G,B,e -> a,b,c) ---
-#include "real_cd_lut_data.h"
+//#include "real_cd_lut_data.h"
+#include "color_threshold_lut.h"
 __device__ float* d_cd_lut = nullptr; // device pointer to LUT data (global memory)
 
 static void ensure_cd_lut()
 {
 	static bool initialized = false;
 	if (initialized) return;
-	printf("Initializing color discrimination LUT in GPU memory...\n");
+	printf("Initializing color discrimination threshold LUT in GPU memory...\n");
+	// New LUT format: single threshold value per RGB cell (no more a,b,c ellipsoid coefficients)
 	size_t cells = static_cast<size_t>(CDLUT::R) * CDLUT::G * CDLUT::B;
-	size_t bytes = cells * CDLUT::STRIDE * sizeof(float);
+	size_t bytes = cells * sizeof(float);
 	float* ptr = nullptr;
 	cudaMalloc(&ptr, bytes);
-	// Copy host real data table (placeholders to be filled by user).
-	cudaMemcpy(ptr, CDLUT::ellipsoids, bytes, cudaMemcpyHostToDevice);
+	// Copy pre-computed threshold values from host LUT
+	cudaMemcpy(ptr, CDLUT::lut, bytes, cudaMemcpyHostToDevice);
 	cudaMemcpyToSymbol(d_cd_lut, &ptr, sizeof(float*));
 	initialized = true;
 }
@@ -289,6 +291,11 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
 }
 
+#if 0
+// [DEPRECATED] Eccentricity factor computation for DKL ellipsoid scaling.
+// This was used to scale the a,b,c coefficients based on pixel eccentricity
+// (distance from screen center). No longer needed since the new LUT directly
+// stores the final threshold value without requiring runtime scaling.
 __device__ inline bool
 computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 {
@@ -314,7 +321,14 @@ computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 	}
 	return false;
 }
+#endif
 
+#if 0
+// [DEPRECATED] Old DKL ellipsoid-based color discrimination check.
+// This function computed S = M^T * diag(a,b,c) * M and evaluated max over
+// cube vertices to determine if T^2 * max_val <= 1.0. The new optimized
+// approach directly stores the pre-computed threshold in the LUT, eliminating
+// the need for runtime matrix computation. Use lookupColorDiscriminationThreshold() instead.
 __device__ inline bool
 checkColorDiscriminationLUT(const float* C, float T, float* cdFactor) {
 	// Lookup a,b,c from fake LUT in global memory to include memory latency.
@@ -414,6 +428,20 @@ checkColorDiscriminationLUT(const float* C, float T, float* cdFactor) {
 	float T2 = T * T;
 	return (T2 * max_val <= 1.0f);
 }
+#endif
+
+// [NEW] Optimized color discrimination threshold lookup.
+// Directly retrieves the pre-computed threshold from LUT based on current RGB color.
+// The LUT now stores the threshold value directly, no runtime DKL ellipsoid computation needed.
+__device__ inline float
+lookupColorDiscriminationThreshold(const float* C) {
+	int ridx = min(max((int)floorf(C[0] * CDLUT::R), 0), CDLUT::R - 1);
+	int gidx = min(max((int)floorf(C[1] * CDLUT::G), 0), CDLUT::G - 1);
+	int bidx = min(max((int)floorf(C[2] * CDLUT::B), 0), CDLUT::B - 1);
+	int cell = (ridx * CDLUT::G + gidx) * CDLUT::B + bidx;
+	// LUT now stores threshold directly (single float per cell)
+	return d_cd_lut[cell];
+}
 
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
@@ -459,9 +487,8 @@ renderCUDA(
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
-	float cdFactor[3];
-	if (enable_color_discrimination_stop)
-		enable_color_discrimination_stop = computeEccentricityFactor(W, H, pix.x, pix.y, cdFactor);
+	// Note: cdFactor and computeEccentricityFactor are no longer needed.
+	// The new LUT directly stores the final threshold without eccentricity scaling.
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -488,11 +515,8 @@ renderCUDA(
 	uint64_t discrim_accum = 0ULL;
 	if (enable_timing && inside) start_loop = clock64();
 
-	// XXX: 02419f is another option, mean finalT of color discrimination result
-	// 0.015253371f is r/sqrt(3), with r=0.0264, which is the everage radius
+	// Stop threshold: fallback when color discrimination is disabled
 	const float stop_threshold = use_mean_T_threshold ? 0.015253371f : 0.0001f;
-	constexpr float todo_remain_ratio = 0.2f; // only do color discrimination in last 30% of Gaussians
-	int todo_threshold = toDo * todo_remain_ratio;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -515,14 +539,12 @@ renderCUDA(
 		block.sync();
 		uint64_t tmp_clk2 = clock64();
 		sync_loop += (tmp_clk2 - tmp_clk1);
-		bool early_stop = false;
 
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
 		{
 			// Keep track of current position in range
 			contributor++;
-			if (early_stop) skip_count++;
 
 			// Resample using conic matrix (cf. "Surface 
 			// Splatting" by Zwicker et al., 2001)
@@ -541,7 +563,12 @@ renderCUDA(
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
-			if (test_T < stop_threshold) // threshold configurable via profile bit
+			// Early termination: use LUT-based threshold when color discrimination enabled
+			float effective_threshold = stop_threshold;
+			if (enable_color_discrimination_stop) {
+				effective_threshold = lookupColorDiscriminationThreshold(C);
+			}
+			if (test_T < effective_threshold)
 			{
 				done = true;
 				continue;
@@ -555,26 +582,6 @@ renderCUDA(
 			expected_invdepth += (1 / depths[collected_id[j]]) * alpha * T;
 
 			T = test_T;
-
-			// Color discrimination timing + call (gated by force or stop flag)
-			bool cond = false;
-			if (enable_color_discrimination_stop && toDo - j <= todo_threshold) {
-				if (enable_timing) {
-					uint64_t ds = clock64();
-					cond = checkColorDiscriminationLUT(C, T, cdFactor);
-					uint64_t de = clock64();
-					discrim_accum += (de - ds);
-				} else {
-					cond = checkColorDiscriminationLUT(C, T, cdFactor);
-				}
-
-				if (cond) {
-					early_stop = true;
-					if (!force_color_discrimination)
-						done = true;
-				} else if (early_stop)
-					false_count++;
-			}
 
 			last_contributor = contributor;
 			contrib_count++;
