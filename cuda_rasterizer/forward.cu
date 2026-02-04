@@ -17,25 +17,24 @@
 #include <stdio.h>
 namespace cg = cooperative_groups;
 
-// --- Real LUT for color discrimination (R,G,B,e -> a,b,c) ---
-//#include "real_cd_lut_data.h"
+// --- Color discrimination LUT (constant memory for best read performance) ---
 #include "color_threshold_lut.h"
-__device__ float* d_cd_lut = nullptr; // device pointer to LUT data (global memory)
+// Use __constant__ memory for small read-only LUT (8x8x8 = 512 floats = 2KB)
+// Benefits: hardware cached, optimized for broadcast reads within a warp
+// Note: __constant__ requires runtime copy via cudaMemcpyToSymbol
+__constant__ float d_cd_lut[CDLUT::R * CDLUT::G * CDLUT::B];
+static bool s_cd_lut_initialized = false;
 
 static void ensure_cd_lut()
 {
-	static bool initialized = false;
-	if (initialized) return;
-	printf("Initializing color discrimination threshold LUT in GPU memory...\n");
-	// New LUT format: single threshold value per RGB cell (no more a,b,c ellipsoid coefficients)
-	size_t cells = static_cast<size_t>(CDLUT::R) * CDLUT::G * CDLUT::B;
-	size_t bytes = cells * sizeof(float);
-	float* ptr = nullptr;
-	cudaMalloc(&ptr, bytes);
-	// Copy pre-computed threshold values from host LUT
-	cudaMemcpy(ptr, CDLUT::lut, bytes, cudaMemcpyHostToDevice);
-	cudaMemcpyToSymbol(d_cd_lut, &ptr, sizeof(float*));
-	initialized = true;
+	if (s_cd_lut_initialized) return;
+	// Copy LUT data to constant memory (one-time initialization, ~2KB)
+	cudaError_t err = cudaMemcpyToSymbol(d_cd_lut, CDLUT::lut, sizeof(d_cd_lut));
+	if (err != cudaSuccess) {
+		printf("ERROR: Failed to copy LUT to constant memory: %s\n", cudaGetErrorString(err));
+		return;
+	}
+	s_cd_lut_initialized = true;
 }
 
 // Forward method for converting the input spherical harmonics
