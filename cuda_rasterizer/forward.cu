@@ -322,6 +322,38 @@ computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 }
 #endif
 
+// Eccentricity-based T threshold scaling factor.
+// Returns a factor to multiply the T threshold by - larger in periphery (more tolerant),
+// 1.0 at center (baseline). Based on inverse of averaged DKL channel factors.
+// Peripheral vision has worse color discrimination, so we can stop earlier (higher T).
+__device__ inline float
+computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y)
+{
+	int32_t w2 = w >> 1;
+	int32_t dx = x - w2;
+	int32_t h2 = h >> 1;
+	int32_t dy = y - h2;
+	float tan2 = (float)(dx * dx + dy * dy) / (float)(w2 * w2);
+
+	// Eccentricity bins with T scaling factors (1/avg of original DKL factors)
+	// Original factors were for 1/length², smaller = more tolerant in periphery
+	// T factors: larger = can stop earlier, so T_factor = 1/avg(rg,yb,lum)
+	constexpr int ENTRYNB = 3;
+	constexpr float bins[ENTRYNB][2] = {
+		// tan², T_factor
+		{ 0.4902908f, 10.803f }, // 35°: avg(0.036,0.106,0.136)=0.0926, 1/avg=10.803
+		{ 0.2174422f,  3.233f }, // 25°: avg(0.201,0.248,0.479)=0.3093, 1/avg=3.233
+		{ 0.0310912f,  1.0f   }  // 10°: baseline (fovea)
+	};
+
+	for (int i = 0; i < ENTRYNB; i++) {
+		if (tan2 >= bins[i][0]) {
+			return bins[i][1];
+		}
+	}
+	return 1.0f; // Default: no scaling at center
+}
+
 #if 0
 // [DEPRECATED] Old DKL ellipsoid-based color discrimination check.
 // This function computed S = M^T * diag(a,b,c) * M and evaluated max over
@@ -486,8 +518,10 @@ renderCUDA(
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
-	// Note: cdFactor and computeEccentricityFactor are no longer needed.
-	// The new LUT directly stores the final threshold without eccentricity scaling.
+
+	// Compute eccentricity-based T threshold scaling factor (once per pixel)
+	// Larger factor in periphery allows earlier termination (higher effective threshold)
+	float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y);
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -563,9 +597,10 @@ renderCUDA(
 				continue;
 			float test_T = T * (1 - alpha);
 			// Early termination: use LUT-based threshold when color discrimination enabled
+			// Scale by eccentricity factor (larger in periphery for earlier stop)
 			float effective_threshold = stop_threshold;
 			if (enable_color_discrimination_stop) {
-				effective_threshold = lookupColorDiscriminationThreshold(C);
+				effective_threshold = ecc_T_factor * lookupColorDiscriminationThreshold(C);
 			}
 			if (test_T < effective_threshold)
 			{
