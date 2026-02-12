@@ -338,10 +338,10 @@ computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y)
 	// Eccentricity bins with T scaling factors (1/avg of original DKL factors)
 	// Original factors were for 1/length², smaller = more tolerant in periphery
 	// T factors: larger = can stop earlier, so T_factor = 1/avg(rg,yb,lum)
-	constexpr int ENTRYNB = 3;
+	constexpr int ENTRYNB = 2;
 	constexpr float bins[ENTRYNB][2] = {
 		// tan², T_factor
-		{ 0.4902908f, 10.803f }, // 35°: avg(0.036,0.106,0.136)=0.0926, 1/avg=10.803
+		//{ 0.4902908f, 10.803f }, // 35°: avg(0.036,0.106,0.136)=0.0926, 1/avg=10.803
 		{ 0.2174422f,  3.233f }, // 25°: avg(0.201,0.248,0.479)=0.3093, 1/avg=3.233
 		{ 0.0310912f,  1.0f   }  // 10°: baseline (fovea)
 	};
@@ -511,7 +511,7 @@ renderCUDA(
 
 	// Compute eccentricity-based T threshold scaling factor (once per pixel)
 	// Larger factor in periphery allows earlier termination (higher effective threshold)
-	//float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y);
+	float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y);
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -580,8 +580,7 @@ renderCUDA(
 			// Scale by eccentricity factor (larger in periphery for earlier stop)
 			float effective_threshold = stop_threshold;
 			if (enable_color_discrimination_stop) {
-				effective_threshold = lookupColorDiscriminationThreshold(C);
-				// No factor
+				effective_threshold = ecc_T_factor * lookupColorDiscriminationThreshold(C);
 			}
 			if (test_T < effective_threshold)
 			{
