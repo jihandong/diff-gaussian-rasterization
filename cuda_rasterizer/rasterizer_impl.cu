@@ -177,15 +177,6 @@ CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, s
 	obtain(chunk, img.accum_alpha, N, 128);
 	obtain(chunk, img.n_contrib, N, 128);
 	obtain(chunk, img.ranges, N, 128);
-	// Profiling buffers (new). Allocate/obtain space for them in the
-	// image chunk after the existing buffers.
-	obtain(chunk, img.gaussians_tested, N, 128);
-	obtain(chunk, img.gaussians_contribs, N, 128);
-	obtain(chunk, img.first_true_at, N, 128);
-	obtain(chunk, img.post_false_after_first, N, 128);
-	// Timing buffers (optional usage governed by profile_mask bits).
-	obtain(chunk, img.loop_cycles, N, 128);
-	obtain(chunk, img.discrim_cycles, N, 128);
 	return img;
 }
 
@@ -334,15 +325,10 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
-	// Always enable profiling and timing. Let upper layers decide whether to use outputs.
-	bool enable_profiling = true;
-	bool enable_timing = true;
 	// Keep color discrimination early-stop controlled by mask bit 2^2 (optional behavior).
 	bool enable_color_discrimination_stop = (profile_mask & 4) != 0;
 	// New profile bit (8) selects higher early-stop threshold (mean final_T) instead of 1e-4.
 	bool use_mean_T_threshold = (profile_mask & 8) != 0;
-	bool enable_naive_color_discrimination = (profile_mask & 16) != 0;
-	bool force_color_discrimination = (profile_mask & 32) != 0;
 
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
@@ -354,17 +340,7 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.conic_opacity,
 		imgState.accum_alpha,
 		imgState.n_contrib,
-		imgState.gaussians_tested,
-		imgState.gaussians_contribs,
-		imgState.first_true_at,
-		imgState.post_false_after_first,
-		imgState.loop_cycles,
-		imgState.discrim_cycles,
-		enable_profiling,
-		enable_timing,
 		enable_color_discrimination_stop,
-		enable_naive_color_discrimination,
-		force_color_discrimination,
 		use_mean_T_threshold,
 		background,
 		out_color,

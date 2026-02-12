@@ -82,60 +82,18 @@ class _RasterizeGaussians(torch.autograd.Function):
         )
 
         # Invoke C++/CUDA rasterizer
-        # HJ-Profiling: The C++ extension now optionally returns two additional
-        # profiling tensors (tests_per_pixel, contribs_per_pixel) at the
-        # end of the returned tuple. We always unpack them, but only
-        # return them to the caller when debug is enabled in
-        # raster_settings.
-        result = _C.rasterize_gaussians(*args)
-        # Supported return arities from native (after adding final_T):
-        # 8  -> base (no profiling)
-        # 12 -> counts only (tests, contribs, first_true_at, post_false_after)
-        # 14 -> counts + timing (adds loop_cycles, discrim_cycles)
-        if isinstance(result, (list, tuple)):
-            if len(result) == 8:
-                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
-                 invdepths, final_T) = result
-                tests_per_pixel = torch.empty(0, dtype=torch.int32, device=color.device)
-                contribs_per_pixel = torch.empty(0, dtype=torch.int32, device=color.device)
-                first_true_at = torch.empty(0, dtype=torch.int32, device=color.device)
-                post_false_after = torch.empty(0, dtype=torch.int32, device=color.device)
-                loop_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
-                discrim_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
-            elif len(result) == 12:
-                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths, final_T,
-                 tests_per_pixel, contribs_per_pixel, first_true_at, post_false_after) = result
-                loop_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
-                discrim_cycles = torch.empty(0, dtype=torch.int64, device=color.device)
-            elif len(result) == 14:
-                (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer, invdepths, final_T,
-                 tests_per_pixel, contribs_per_pixel, first_true_at, post_false_after, loop_cycles, discrim_cycles) = result
-            else:
-                raise RuntimeError(f"Unexpected rasterizer return arity: {len(result)}")
-        else:
-            raise RuntimeError("Rasterizer returned non-tuple result")
+        (num_rendered, color, radii, geomBuffer, binningBuffer, imgBuffer,
+         invdepths, final_T) = _C.rasterize_gaussians(*args)
 
         # Keep relevant tensors for backward
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, opacities, geomBuffer, binningBuffer, imgBuffer)
-        # Always return a fixed 10-tuple to the renderer, filling empties as needed.
-        # (color, final_T, radii, invdepths, tests, contribs, first_true, post_false, loop_cycles, discrim_cycles)
-        tests_out = tests_per_pixel if tests_per_pixel.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
-        contribs_out = contribs_per_pixel if contribs_per_pixel.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
-        first_true_out = first_true_at if first_true_at.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
-        post_false_out = post_false_after if post_false_after.numel() > 0 else torch.empty(0, dtype=torch.int32, device=color.device)
-        loop_out = loop_cycles if loop_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
-        discrim_out = discrim_cycles if discrim_cycles.numel() > 0 else torch.empty(0, dtype=torch.int64, device=color.device)
         final_T_out = final_T if final_T.numel() > 0 else torch.empty(0, dtype=color.dtype, device=color.device)
-        return (
-            color, final_T_out, radii, invdepths,
-            tests_out, contribs_out, first_true_out, post_false_out,
-            loop_out, discrim_out
-        )
+        return (color, final_T_out, radii, invdepths)
 
     @staticmethod
-    def backward(ctx, grad_out_color, _, grad_out_depth):
+    def backward(ctx, grad_out_color, grad_final_T, grad_radii, grad_out_depth):
 
         # Restore necessary values from context
         num_rendered = ctx.num_rendered

@@ -48,19 +48,6 @@ namespace CudaRasterizer
 		uint2* ranges;
 		uint32_t* n_contrib;
 		float* accum_alpha;
-		// Profiling buffers: per-pixel number of Gaussian candidates
-		// traversed and number of contributors that significantly
-		// affected the pixel.
-		uint32_t* gaussians_tested;
-		uint32_t* gaussians_contribs;
-		// New profiling: contributor index at first discrimination "keep" (true)
-		// and count of subsequent "reject" (false) outcomes after that first true.
-		uint32_t* first_true_at;
-		uint32_t* post_false_after_first;
-		// Timing buffers (cycles): total per-pixel loop cycles and the
-		// accumulated cycles spent inside the color discrimination test.
-		uint64_t* loop_cycles;
-		uint64_t* discrim_cycles;
 
 		static ImageState fromChunk(char*& chunk, size_t N);
 	};

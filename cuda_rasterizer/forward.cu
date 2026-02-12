@@ -488,17 +488,7 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
-	uint32_t* __restrict__ gaussians_tested,
-	uint32_t* __restrict__ gaussians_contrib_count,
-	uint32_t* __restrict__ gaussians_skip_count,
-	uint32_t* __restrict__ gaussians_false_count,
-	uint64_t* __restrict__ loop_cycles,
-	uint64_t* __restrict__ discrim_cycles,
-	bool enable_profiling,
-	bool enable_timing,
 	bool enable_color_discrimination_stop,
-	bool enable_naive_color_discrimination, // deprecated
-	bool force_color_discrimination,
 	bool use_mean_T_threshold,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
@@ -537,16 +527,9 @@ renderCUDA(
 	float T = 1.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
-	uint32_t contrib_count = 0;
-	uint32_t skip_count = 0;
-	uint32_t false_count = 0;
 	float C[CHANNELS] = { 0 };
 
 	float expected_invdepth = 0.0f;
-	uint64_t start_loop = 0ULL;
-	uint64_t sync_loop = 0ULL;
-	uint64_t discrim_accum = 0ULL;
-	if (enable_timing && inside) start_loop = clock64();
 
 	// Stop threshold: fallback when color discrimination is disabled
 	const float stop_threshold = use_mean_T_threshold ? 0.015253371f : 0.0001f;
@@ -568,10 +551,7 @@ renderCUDA(
 			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 		}
-		uint64_t tmp_clk1 = clock64(); // ensure all loads are done
 		block.sync();
-		uint64_t tmp_clk2 = clock64();
-		sync_loop += (tmp_clk2 - tmp_clk1);
 
 		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
@@ -618,7 +598,6 @@ renderCUDA(
 			T = test_T;
 
 			last_contributor = contributor;
-			contrib_count++;
 		}
 	}
 
@@ -628,19 +607,6 @@ renderCUDA(
 	{
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
-		// Save profiling counters only when profiling is enabled.
-		if (enable_profiling)
-		{
-			if (gaussians_tested) gaussians_tested[pix_id] = contributor;
-			if (gaussians_contrib_count) gaussians_contrib_count[pix_id] = contrib_count;
-			if (gaussians_skip_count) gaussians_skip_count[pix_id] = skip_count;
-			if (gaussians_false_count) gaussians_false_count[pix_id] = false_count;
-		}
-		// Save timing if enabled
-		if (enable_timing) {
-			if (loop_cycles) loop_cycles[pix_id] = clock64() - start_loop - sync_loop;
-			if (discrim_cycles) discrim_cycles[pix_id] = discrim_accum;
-		}
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 
@@ -659,17 +625,7 @@ void FORWARD::render(
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
-	uint32_t* gaussians_tested,
-	uint32_t* gaussians_contrib_count,
-	uint32_t* first_true_at,
-	uint32_t* post_false_after_first,
-	uint64_t* loop_cycles,
-	uint64_t* discrim_cycles,
-	bool enable_profiling,
-	bool enable_timing,
 	bool enable_color_discrimination_stop,
-	bool enable_naive_color_discrimination,
-	bool force_color_discrimination,
 	bool use_mean_T_threshold,
 	const float* bg_color,
 	float* out_color,
@@ -688,17 +644,7 @@ void FORWARD::render(
 		conic_opacity,
 		final_T,
 		n_contrib,
-		gaussians_tested,
-		gaussians_contrib_count,
-		first_true_at,
-		post_false_after_first,
-		loop_cycles,
-		discrim_cycles,
-		enable_profiling,
-		enable_timing,
 		enable_color_discrimination_stop,
-		enable_naive_color_discrimination,
-		force_color_discrimination,
 		use_mean_T_threshold,
 		bg_color,
 		out_color,
