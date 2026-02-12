@@ -511,7 +511,7 @@ renderCUDA(
 
 	// Compute eccentricity-based T threshold scaling factor (once per pixel)
 	// Larger factor in periphery allows earlier termination (higher effective threshold)
-	float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y);
+	//float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y);
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -580,7 +580,8 @@ renderCUDA(
 			// Scale by eccentricity factor (larger in periphery for earlier stop)
 			float effective_threshold = stop_threshold;
 			if (enable_color_discrimination_stop) {
-				effective_threshold = ecc_T_factor * lookupColorDiscriminationThreshold(C);
+				effective_threshold = lookupColorDiscriminationThreshold(C);
+				// No factor
 			}
 			if (test_T < effective_threshold)
 			{
