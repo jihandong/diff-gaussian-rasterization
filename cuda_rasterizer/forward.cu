@@ -465,10 +465,10 @@ checkColorDiscriminationLUT(const float* C, float T, float* cdFactor) {
 // Directly retrieves the pre-computed threshold from LUT based on current RGB color.
 // The LUT now stores the threshold value directly, no runtime DKL ellipsoid computation needed.
 __device__ inline float
-lookupColorDiscriminationThreshold(const float* C) {
-	int ridx = min(max((int)floorf(C[0] * CDLUT::R), 0), CDLUT::R - 1);
-	int gidx = min(max((int)floorf(C[1] * CDLUT::G), 0), CDLUT::G - 1);
-	int bidx = min(max((int)floorf(C[2] * CDLUT::B), 0), CDLUT::B - 1);
+lookupColorDiscriminationThreshold(const float* C, const float* bg_color) {
+	int ridx = min(max((int)floorf((C[0] + bg_color[0]) * CDLUT::R), 0), CDLUT::R - 1);
+	int gidx = min(max((int)floorf(C[1] + bg_color[1]) * CDLUT::G), 0), CDLUT::G - 1);
+	int bidx = min(max((int)floorf(C[2] + bg_color[2]) * CDLUT::B), 0), CDLUT::B - 1);
 	int cell = (ridx * CDLUT::G + gidx) * CDLUT::B + bidx;
 	// LUT now stores threshold directly (single float per cell)
 	return d_cd_lut[cell];
@@ -580,7 +580,7 @@ renderCUDA(
 			// Scale by eccentricity factor (larger in periphery for earlier stop)
 			float effective_threshold = stop_threshold;
 			if (enable_color_discrimination_stop) {
-				effective_threshold = lookupColorDiscriminationThreshold(C);
+				effective_threshold = lookupColorDiscriminationThreshold(C, bg_color);
 				// No factor
 			}
 			if (test_T < effective_threshold)
