@@ -467,8 +467,8 @@ checkColorDiscriminationLUT(const float* C, float T, float* cdFactor) {
 __device__ inline float
 lookupColorDiscriminationThreshold(const float* C, const float* bg_color) {
 	int ridx = min(max((int)floorf((C[0] + bg_color[0]) * CDLUT::R), 0), CDLUT::R - 1);
-	int gidx = min(max((int)floorf(C[1] + bg_color[1]) * CDLUT::G), 0), CDLUT::G - 1);
-	int bidx = min(max((int)floorf(C[2] + bg_color[2]) * CDLUT::B), 0), CDLUT::B - 1);
+	int gidx = min(max((int)floorf((C[1] + bg_color[1]) * CDLUT::G), 0), CDLUT::G - 1);
+	int bidx = min(max((int)floorf((C[2] + bg_color[2]) * CDLUT::B), 0), CDLUT::B - 1);
 	int cell = (ridx * CDLUT::G + gidx) * CDLUT::B + bidx;
 	// LUT now stores threshold directly (single float per cell)
 	return d_cd_lut[cell];
