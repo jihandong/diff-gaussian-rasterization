@@ -585,7 +585,7 @@ renderCUDA(
 					T = 0.0001f;
 					done = true;
 					continue;
-				}}
+				}
 			} else if (test_T < effective_threshold) {
 				done = true;
 				continue;
