@@ -582,7 +582,10 @@ renderCUDA(
 			if (enable_color_discrimination_stop) {
 				effective_threshold = lookupColorDiscriminationThreshold(C);
 				if (test_T < effective_threshold) {
-					T = 0.0001f;
+					static constexpr float epsilon = 1e-4f;
+					for (int ch = 0; ch < CHANNELS; ch++)
+						C[ch] /= (1 - epsilon - T);
+					T = epsilon;
 					done = true;
 					continue;
 				}
