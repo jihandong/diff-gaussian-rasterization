@@ -353,7 +353,7 @@ computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y, float foc
 	return 1.0f; // Default: no scaling at center
 	*/
 	/* tan² > 0.4902908f: 5; else if tan² > 0.0310912f: linear betwen 5 and 1.0; else: 1.0 */
-	static constexpr float BigFactor = 5.0f;
+	static constexpr float BigFactor = 10.0f;
 	if (tan2 >= 0.4902908f) {
 		return BigFactor;
 	} else {
@@ -591,8 +591,10 @@ renderCUDA(
 				effective_threshold = lookupColorDiscriminationThreshold(C) * ecc_T_factor;
 				if (test_T < effective_threshold) {
 					static constexpr float epsilon = 1e-4f;
-					for (int ch = 0; ch < CHANNELS; ch++)
-						C[ch] *= (1.0f - epsilon) / (1.0f - T);
+					for (int ch = 0; ch < CHANNELS; ch++) {
+						C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+						C[ch] *= (1.0f - epsilon) / (1.0f - test_T);
+					}
 					T = epsilon;
 					done = true;
 					continue;
