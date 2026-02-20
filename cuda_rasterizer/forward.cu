@@ -327,17 +327,16 @@ computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 // 1.0 at center (baseline). Based on inverse of averaged DKL channel factors.
 // Peripheral vision has worse color discrimination, so we can stop earlier (higher T).
 __device__ inline float
-computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y)
+computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y, float focal_x, float focal_y)
 {
-	int32_t w2 = w >> 1;
-	int32_t dx = x - w2;
-	int32_t h2 = h >> 1;
-	int32_t dy = y - h2;
-	float tan2 = (float)(dx * dx + dy * dy) / (float)(w2 * w2);
+	float dx = (float)x - (float)(w >> 1);
+    float dy = (float)y - (float)(h >> 1);
+	float tan2 = (dx * dx) / (focal_x * focal_x) + (dy * dy) / (focal_y * focal_y);
 
 	// Eccentricity bins with T scaling factors (1/avg of original DKL factors)
 	// Original factors were for 1/length², smaller = more tolerant in periphery
 	// T factors: larger = can stop earlier, so T_factor = 1/avg(rg,yb,lum)
+	/*
 	constexpr int ENTRYNB = 3;
 	constexpr float bins[ENTRYNB][2] = {
 		// tan², T_factor
@@ -352,6 +351,18 @@ computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y)
 		}
 	}
 	return 1.0f; // Default: no scaling at center
+	*/
+	/* tan² > 0.4902908f: 5; else if tan² > 0.0310912f: linear betwen 5 and 1.0; else: 1.0 */
+	static constexpr float BigFactor = 5.0f;
+	if (tan2 >= 0.4902908f) {
+		return BigFactor;
+	} else if (tan2 >= 0.0310912f) {
+		// Linear interpolation between 1.0 and 10.803 based on tan2
+		float t = (tan2 - 0.0310912f) / (0.4902908f - 0.0310912f);
+		return 1.0f + t * (BigFactor - 1.0f);
+	} else {
+		return 1.0f;
+	}
 }
 
 #if 0
@@ -511,7 +522,7 @@ renderCUDA(
 
 	// Compute eccentricity-based T threshold scaling factor (once per pixel)
 	// Larger factor in periphery allows earlier termination (higher effective threshold)
-	//float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y);
+	const float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y, f);
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -580,7 +591,7 @@ renderCUDA(
 			// Scale by eccentricity factor (larger in periphery for earlier stop)
 			float effective_threshold = stop_threshold;
 			if (enable_color_discrimination_stop) {
-				effective_threshold = lookupColorDiscriminationThreshold(C);
+				effective_threshold = lookupColorDiscriminationThreshold(C) * ecc_T_factor;
 				if (test_T < effective_threshold) {
 					static constexpr float epsilon = 1e-4f;
 					for (int ch = 0; ch < CHANNELS; ch++)
@@ -626,6 +637,7 @@ void FORWARD::render(
 	const uint2* ranges,
 	const uint32_t* point_list,
 	int W, int H,
+	float focal_x, float focal_y,
 	const float2* means2D,
 	const float* colors,
 	const float4* conic_opacity,

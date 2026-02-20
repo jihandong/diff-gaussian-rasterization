@@ -412,6 +412,7 @@ void CudaRasterizer::Rasterizer::backward(
 		imgState.ranges,
 		binningState.point_list,
 		width, height,
+		focal_x, focal_y,
 		background,
 		geomState.means2D,
 		geomState.conic_opacity,
