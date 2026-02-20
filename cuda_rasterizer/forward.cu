@@ -518,7 +518,7 @@ renderCUDA(
 
 	// Compute eccentricity-based T threshold scaling factor (once per pixel)
 	// Larger factor in periphery allows earlier termination (higher effective threshold)
-	const float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y, f);
+	const float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y, focal_x, focal_y);
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
