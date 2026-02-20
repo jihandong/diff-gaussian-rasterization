@@ -356,12 +356,8 @@ computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y, float foc
 	static constexpr float BigFactor = 5.0f;
 	if (tan2 >= 0.4902908f) {
 		return BigFactor;
-	} else if (tan2 >= 0.0310912f) {
-		// Linear interpolation between 1.0 and 10.803 based on tan2
-		float t = (tan2 - 0.0310912f) / (0.4902908f - 0.0310912f);
-		return 1.0f + t * (BigFactor - 1.0f);
 	} else {
-		return 1.0f;
+		return 1e-4 + tan2 / 0.4902908f * (BigFactor - 1e-4);
 	}
 }
 
