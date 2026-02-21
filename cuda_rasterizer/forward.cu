@@ -17,6 +17,8 @@
 #include <stdio.h>
 namespace cg = cooperative_groups;
 
+//#define ECCENTRICITY_BASED_T_SCALING
+
 // --- Color discrimination LUT (constant memory for best read performance) ---
 #include "color_threshold_lut.h"
 // Use __constant__ memory for small read-only LUT (8x8x8 = 512 floats = 2KB)
@@ -290,7 +292,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
 }
 
-#if 0
+/*
 // [DEPRECATED] Eccentricity factor computation for DKL ellipsoid scaling.
 // This was used to scale the a,b,c coefficients based on pixel eccentricity
 // (distance from screen center). No longer needed since the new LUT directly
@@ -320,48 +322,9 @@ computeEccentricityFactor(int32_t w, int32_t h, int32_t x, int32_t y, float* f)
 	}
 	return false;
 }
-#endif
+*/
 
-// Eccentricity-based T threshold scaling factor.
-// Returns a factor to multiply the T threshold by - larger in periphery (more tolerant),
-// 1.0 at center (baseline). Based on inverse of averaged DKL channel factors.
-// Peripheral vision has worse color discrimination, so we can stop earlier (higher T).
-__device__ inline float
-computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y, float focal_x, float focal_y)
-{
-	float dx = (float)x - (float)(w >> 1);
-    float dy = (float)y - (float)(h >> 1);
-	float tan2 = (dx * dx) / (focal_x * focal_x) + (dy * dy) / (focal_y * focal_y);
-
-	// Eccentricity bins with T scaling factors (1/avg of original DKL factors)
-	// Original factors were for 1/length², smaller = more tolerant in periphery
-	// T factors: larger = can stop earlier, so T_factor = 1/avg(rg,yb,lum)
-	/*
-	constexpr int ENTRYNB = 3;
-	constexpr float bins[ENTRYNB][2] = {
-		// tan², T_factor
-		{ 0.4902908f, 10.803f }, // 35°: avg(0.036,0.106,0.136)=0.0926, 1/avg=10.803
-		{ 0.2174422f,  3.233f }, // 25°: avg(0.201,0.248,0.479)=0.3093, 1/avg=3.233
-		{ 0.0310912f,  1.0f   }  // 10°: baseline (fovea)
-	};
-
-	for (int i = 0; i < ENTRYNB; i++) {
-		if (tan2 >= bins[i][0]) {
-			return bins[i][1];
-		}
-	}
-	return 1.0f; // Default: no scaling at center
-	*/
-	/* tan² > 0.4902908f: 5; else if tan² > 0.0310912f: linear betwen 5 and 1.0; else: 1.0 */
-	static constexpr float BigFactor = 13.0f;
-	if (tan2 >= 0.4902908f) {
-		return BigFactor;
-	} else {
-		return 1.0f + tan2 / 0.4902908f * (BigFactor - 1.0f);
-	}
-}
-
-#if 0
+/*
 // [DEPRECATED] Old DKL ellipsoid-based color discrimination check.
 // This function computed S = M^T * diag(a,b,c) * M and evaluated max over
 // cube vertices to determine if T^2 * max_val <= 1.0. The new optimized
@@ -466,7 +429,47 @@ checkColorDiscriminationLUT(const float* C, float T, float* cdFactor) {
 	float T2 = T * T;
 	return (T2 * max_val <= 1.0f);
 }
-#endif
+*/
+
+
+// Eccentricity-based T threshold scaling factor.
+// Returns a factor to multiply the T threshold by - larger in periphery (more tolerant),
+// 1.0 at center (baseline). Based on inverse of averaged DKL channel factors.
+// Peripheral vision has worse color discrimination, so we can stop earlier (higher T).
+__device__ inline float
+computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y, float focal_x, float focal_y)
+{
+	float dx = (float)x - (float)(w >> 1);
+    float dy = (float)y - (float)(h >> 1);
+	float tan2 = (dx * dx) / (focal_x * focal_x) + (dy * dy) / (focal_y * focal_y);
+
+	// Eccentricity bins with T scaling factors (1/avg of original DKL factors)
+	// Original factors were for 1/length², smaller = more tolerant in periphery
+	// T factors: larger = can stop earlier, so T_factor = 1/avg(rg,yb,lum)
+	/*
+	constexpr int ENTRYNB = 3;
+	constexpr float bins[ENTRYNB][2] = {
+		// tan², T_factor
+		{ 0.4902908f, 10.803f }, // 35°: avg(0.036,0.106,0.136)=0.0926, 1/avg=10.803
+		{ 0.2174422f,  3.233f }, // 25°: avg(0.201,0.248,0.479)=0.3093, 1/avg=3.233
+		{ 0.0310912f,  1.0f   }  // 10°: baseline (fovea)
+	};
+
+	for (int i = 0; i < ENTRYNB; i++) {
+		if (tan2 >= bins[i][0]) {
+			return bins[i][1];
+		}
+	}
+	return 1.0f; // Default: no scaling at center
+	*/
+	/* tan² > 0.4902908f: 5; else if tan² > 0.0310912f: linear betwen 5 and 1.0; else: 1.0 */
+	static constexpr float BigFactor = 13.0f;
+	if (tan2 >= 0.4902908f) {
+		return BigFactor;
+	} else {
+		return 1.0f + tan2 / 0.4902908f * (BigFactor - 1.0f);
+	}
+}
 
 // [NEW] Optimized color discrimination threshold lookup.
 // Directly retrieves the pre-computed threshold from LUT based on current RGB color.
@@ -517,9 +520,11 @@ renderCUDA(
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
 
+#ifdef ECCENTRICITY_BASED_T_SCALING
 	// Compute eccentricity-based T threshold scaling factor (once per pixel)
 	// Larger factor in periphery allows earlier termination (higher effective threshold)
 	const float ecc_T_factor = computeEccentricityTFactor(W, H, pix.x, pix.y, focal_x, focal_y);
+#endif
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -588,7 +593,11 @@ renderCUDA(
 			// Scale by eccentricity factor (larger in periphery for earlier stop)
 			float effective_threshold = stop_threshold;
 			if (enable_color_discrimination_stop) {
+#ifdef ECCENTRICITY_BASED_T_SCALING
 				effective_threshold = lookupColorDiscriminationThreshold(C) * ecc_T_factor;
+#else
+				effective_threshold = lookupColorDiscriminationThreshold(C);
+#endif
 				if (test_T < effective_threshold) {
 					static constexpr float epsilon = 1e-4f;
 					for (int ch = 0; ch < CHANNELS; ch++) {
