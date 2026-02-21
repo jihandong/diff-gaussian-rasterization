@@ -357,7 +357,7 @@ computeEccentricityTFactor(int32_t w, int32_t h, int32_t x, int32_t y, float foc
 	if (tan2 >= 0.4902908f) {
 		return BigFactor;
 	} else {
-		return 1e-4 + tan2 / 0.4902908f * (BigFactor - 1e-4);
+		return 1.0f + tan2 / 0.4902908f * (BigFactor - 1.0f);
 	}
 }
 
