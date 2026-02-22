@@ -544,9 +544,6 @@ renderCUDA(
 
 	float expected_invdepth = 0.0f;
 
-	// Stop threshold: fallback when color discrimination is disabled
-	const float stop_threshold = use_mean_T_threshold ? 0.015253371f : 0.0001f;
-
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
 	{
@@ -591,7 +588,7 @@ renderCUDA(
 			float test_T = T * (1 - alpha);
 			// Early termination: use LUT-based threshold when color discrimination enabled
 			// Scale by eccentricity factor (larger in periphery for earlier stop)
-			float effective_threshold = stop_threshold;
+			float effective_threshold = 0.0001f;;
 			if (enable_color_discrimination_stop) {
 #ifdef ECCENTRICITY_BASED_T_SCALING
 				effective_threshold = lookupColorDiscriminationThreshold(C) * ecc_T_factor;
@@ -599,6 +596,17 @@ renderCUDA(
 				effective_threshold = lookupColorDiscriminationThreshold(C);
 #endif
 				if (test_T < effective_threshold) {
+					static constexpr float epsilon = 1e-4f;
+					for (int ch = 0; ch < CHANNELS; ch++) {
+						C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+						C[ch] *= (1.0f - epsilon) / (1.0f - test_T);
+					}
+					T = epsilon;
+					done = true;
+					continue;
+				}
+			} else if (use_mean_T_threshold) {
+				if (test_T < 0.015253371f) {
 					static constexpr float epsilon = 1e-4f;
 					for (int ch = 0; ch < CHANNELS; ch++) {
 						C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
